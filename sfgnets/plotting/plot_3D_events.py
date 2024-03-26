@@ -1,0 +1,214 @@
+## Defines the general plot function for plotting in 3D events
+
+import plotly.graph_objects as go
+from matplotlib.colors import ListedColormap
+import numpy as np
+import matplotlib.pyplot as plt
+
+def rgb_to_hex(rgb):
+    """
+    Convert RGB values to a hexadecimal color code.
+
+    Args:
+        rgb (tuple): A tuple containing the RGB values as floats between 0 and 1.
+
+    Returns:
+        str: Hexadecimal color code representing the RGB values.
+    """
+    return "#{:02X}{:02X}{:02X}".format(int(rgb[0] * 255), int(rgb[1] * 255), int(rgb[2] * 255))
+
+
+def plotly_event_general(pos3d:np.array=None,
+                    image:np.array=None, 
+                    max_energy:float=200,
+                    cube_size:float = 10,
+                    energies:np.array=None,
+                    xyz_ranges:list[tuple[float,float]]=np.array([[-985.92, +985.92],[-257.56, +317.56],[-2888.78, -999.1]]),
+                    fig=None,
+                    cmap:str='Wistia',
+                    title:str="Particles interacting in SFG detector",
+                    label:str='Hit',
+                    pdg:np.array=None,
+                    vertex:tuple[list[float],list[float],list[float]]=None,
+                    center:bool=False,
+                    focus:bool=False,
+                    **kwargs
+                    ):
+    """
+    Generate a 3D plot using Plotly for visualising a voxelised image.
+
+    Args:
+        pos3d (numpy.ndarray): The 3D coordinates of the hit as a numpy array.
+        image (numpy.ndarray): The voxelised image as a numpy array.
+        max_energy (float, optional): The maximum energy value for color scaling. Default is 1.
+        cube_size (float, optional): The size of the cube in the plot. Default is 1.
+    """
+    
+    
+    if image is not None:
+        if pos3d is not None:
+            raise ValueError("Cannot provide both pos3d and image.")
+        # Convert the image to coordinates
+        image_int = image.astype(int)
+        x1, y1, z1 = np.nonzero(image_int)
+        opacity = np.clip(image / (max_energy * 0.5), 0, 1)
+        
+    else:
+        if pos3d is None:
+            raise ValueError("Must provide either pos3d or image")
+        if pos3d.shape[-1]!= 3:
+            raise ValueError("pos3d must be a 3D array")
+        reshaped_pos3d = np.reshape(pos3d, (-1,3))
+        x1, y1, z1 = reshaped_pos3d[...,0], reshaped_pos3d[...,1], reshaped_pos3d[...,2]
+        if energies is not None:
+            reshaped_energies=np.reshape(energies, (-1,))
+
+    # Create a 3D figure if not provided
+    if fig is None:
+        fig = go.Figure()
+    
+
+    base_cmap = plt.get_cmap(cmap)
+    num_colors = 100
+    hex_colors = [rgb_to_hex(base_cmap(i / (num_colors - 1))) for i in range(num_colors)]
+    custom_cmap = ListedColormap(hex_colors)
+    N = int(max_energy) + 1  # Adjust N to your desired range
+    values = np.linspace(0, N, num=N)
+    colors = [rgb_to_hex(custom_cmap(value / N)) for value in values]
+
+    # Create a mesh3d trace for each voxel (cube)
+    for j, (x, y, z) in enumerate(zip(x1, y1, z1)):
+        
+        name=label
+        
+        if image is not None:
+            op=opacity[x,y,z]
+            cl=colors[int(image[x, y, z])]
+        else:
+            op=0.6
+            if energies is not None:
+                cl=colors[int(reshaped_energies[j])]
+            else:
+                cl=np.random.choice(colors)
+        
+        if pdg is not None:
+            if pos3d is not None:
+                # old_index=np.unravel_index(j, pos3d.shape[:-1])
+                particle_pdg=pdg[j]
+                if j:
+                    if len(particle_pdg)>0:
+                        name=f"{particle_pdg}"
+          
+        cube = go.Mesh3d(
+            x=[x, x, x + cube_size, x + cube_size, x, x, x + cube_size, x + cube_size],
+            y=[y, y + cube_size, y + cube_size, y, y, y + cube_size, y + cube_size, y],
+            z=[z, z, z, z, z + cube_size, z + cube_size, z + cube_size, z + cube_size],
+            i=[7, 0, 0, 0, 4, 4, 6, 6, 4, 0, 3, 2],
+            j=[3, 4, 1, 2, 5, 6, 5, 2, 0, 1, 6, 3],
+            k=[0, 7, 2, 3, 6, 7, 1, 1, 5, 5, 7, 6],
+            colorbar=dict(
+                thickness=20,
+                title='Voxel Values',
+            ),
+            color=cl,
+            flatshading=True,
+            opacity=op,
+            legendgroup=label,
+            name=name,
+            showlegend=(j==0),
+        )
+        fig.add_trace(cube)
+    
+    # Adds the vertex point
+    if vertex is not None:
+        point=go.Scatter3d(x=vertex[0],y=vertex[1],z=vertex[2],
+                           mode="markers",
+                           marker={"size":10.,"color":"#860021"},
+                           name="Vertex")
+        fig.add_trace(point)
+
+    # Set the margin to remove all margins
+    fig.update_layout(margin=dict(l=0, r=0, t=0, b=0))
+
+    # Set the image size based on the aspect ratio
+    width, height = 800, 800  # Adjust these values as needed
+    fig.update_layout(width=width, height=height,title=title)
+
+    fig.update_layout(
+        scene=dict(
+            xaxis=dict(range=xyz_ranges[0],
+                       title='X',
+                       showticklabels=True,
+                       gridcolor="blue", backgroundcolor="#07042F"),
+            yaxis=dict(range=xyz_ranges[1],
+                       title='Y',
+                       showticklabels=True,
+                       gridcolor="blue", backgroundcolor="#07042F"),
+            zaxis=dict(range=xyz_ranges[2],
+                       title='Z',
+                       showticklabels=True,
+                       gridcolor="blue", backgroundcolor="#07042F"),
+        )
+    )
+    
+    # Set the aspect ratio to be equal
+    fig.update_layout(scene=dict(aspectmode='manual',
+                  aspectratio=dict(x=1, y=(xyz_ranges[1][1]-xyz_ranges[1][0])/(xyz_ranges[0][1]-xyz_ranges[0][0]), z=(xyz_ranges[2][1]-xyz_ranges[2][0])/(xyz_ranges[0][1]-xyz_ranges[0][0]))))
+
+    # Set the camera parameters for initial zoom
+    eye= dict(x=0., y=0.1, z=0.) if focus else dict(x=0., y=1., z=0.)
+    if vertex is not None and center:
+        # _eye=np.array([eye['x'],eye['y'],eye['z']])
+        _center= (vertex[:,0]-np.mean(xyz_ranges,axis=1))/(xyz_ranges[:,1]-xyz_ranges[:,0])/2
+        _center = dict(x=_center[0],y=_center[1],z=_center[2])
+        # print(center)
+        # center= dict(x=0, y=0.2, z=-0.3)
+    else:
+        _center= dict(x=0, y=0, z=0)
+    fig.update_layout(
+        scene=dict(
+            camera=dict(
+                center=_center,  # adjust the center of the view
+                eye=eye,  # adjust the camera's initial position
+            )
+        )
+    )
+
+    fig.update_layout(paper_bgcolor='rgba(0, 0, 0, 0)', plot_bgcolor='rgba(0, 0, 0, 0)')
+    fig.update_layout(legend=dict(font=dict(color="white"),orientation="h"))
+
+    return fig
+
+
+def plotly_event_hittag(pos3d:np.array=None,
+                        image:np.array=None,
+                        energies:np.array=None,
+                        hittags:np.array=None,
+                        pdg:np.array=None,
+                        cmaps:list[str]=["spring","Wistia","cool"],
+                        general_label:str="",
+                        fig=None,
+                        vertex:tuple[list[float],list[float],list[float]]=None,
+                        **kwargs):
+    """
+    Plots 3D events with different labelgroups and cmaps for each tag: 1 is Multiparticle, 2 is Single particle, 3 is noise
+    """
+    
+    if hittags is None:
+        raise ValueError("Can't plot with no hittags")
+    
+    for i,label in enumerate(["Vertex activity", "Single particle", "Noise"]):
+        
+        
+        fig=plotly_event_general(pos3d=pos3d[hittags==i] if pos3d is not None else None,
+                                 image=image[hittags==i] if image is not None else None, 
+                                energies=energies[hittags==i] if energies is not None else None,
+                                fig=None if i==0 and fig is None else fig,
+                                cmap=cmaps[i],
+                                label=general_label+label,
+                                pdg=pdg[hittags==i] if pdg is not None else None,
+                                vertex=vertex if i==2 else None,
+                                **kwargs)
+        
+    return fig
+    
