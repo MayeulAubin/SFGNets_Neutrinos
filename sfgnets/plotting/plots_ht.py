@@ -14,6 +14,8 @@ import matplotlib
 import particle
 from sfgnets.plotting.plot_3D_events import plotly_event_hittag as _plotly_event_hittag
 
+plt.rcParams['text.usetex'] = True
+
 target_names = ["Vertex activity", "Single P", "Noise"]
 use_log_scale=False
 x_lim_dist=(0.5,2000) if use_log_scale else (0.5,200)
@@ -28,7 +30,7 @@ particles_to_consider_pdg=[11,-11,22, 13, -13, 2212, 2112, 211, -211]
 
 reaction_codes=[0, 1, 11, 12, 13, 16, 17, 21, 22, 23, 26, 31, 32, 33, 34, 36, 38, 39, 41, 42, 43, 44, 45, 46, 51, 52]
 reaction_codes_short_labels=['tot', 'ccqe', 'ccppip', 'ccppi0', 'ccnpip', 'cccoh', 'ccgam', 'ccmpi', 'cceta', 'cck', 'ccdis', 'ncnpi0', 'ncppi0', 'ncppim', 'ncnpip', 'nccoh', 'ncngam', 'ncpgam', 'ncmpi', 'ncneta', 'ncpeta', 'nck0', 'nckp', 'ncdis', 'ncqep', 'ncqen']
-reaction_codes_long_labels=['Total', 'CCQE: \\nu_{l} n \\rightarrow l^{-} p', 'CC 1\\pi: \\nu_{l} p \\rightarrow l^{-} p \\pi^{+}', 'CC 1\\pi: \\nu_{l} n \\rightarrow l^{-} p \\pi^{0}', 'CC 1\\pi: \\nu_{l} n \\rightarrow l^{-} n \\pi^{+}', 'CC coherent-\\pi: \\nu_{l} ^{16}O \\rightarrow l^{-} ^{16}O \\pi^{+}', '1\\gamma from \\Delta: \\nu_{l} n \\rightarrow l^{-} p \\gamma', "CC (1.3 < W < 2 GeV): \\nu_{l} N \\rightarrow l^{-} N' multi-\\pi", 'CC 1\\eta: \\nu_{l} n \\rightarrow l^{-} p \\eta', 'CC 1K: \\nu_{l} n \\rightarrow l^{-} \\Lambda K^{+}', "CC DIS (2 GeV < W): \\nu_{l} N \\rightarrow l^{-} N' mesons", 'NC 1\\pi: \\nu_{l} n \\rightarrow \\nu_{l} n \\pi^{0}', 'NC 1\\pi: \\nu_{l} p \\rightarrow \\nu_{l} p \\pi^{0}', 'NC 1\\pi: \\nu_{l} n \\rightarrow \\nu_{l} p \\pi^{-}', 'NC 1\\pi: \\nu_{l} p \\rightarrow \\nu_{l} n \\pi^{+}', 'NC coherent-\\pi: \\nu_{l} ^{16}O \\rightarrow \\nu_{l} ^{16}O \\pi^{0}', '1\\gamma from \\Delta: \\nu_{l} n \\rightarrow \\nu_{l} n \\gamma', '1\\gamma from \\Delta: \\nu_{l} p \\rightarrow \\nu_{l} p \\gamma', 'NC (1.3 < W < 2 GeV): \\nu_{l} N \\rightarrow \\nu_{l} N multi-\\pi', 'NC 1\\eta: \\nu_{l} n \\rightarrow \\nu_{l} n \\eta', 'NC 1\\eta: \\nu_{l} p \\rightarrow \\nu_{l} p \\eta', 'NC 1K: \\nu_{l} n \\rightarrow \\nu_{l} \\Lambda K^{0}', 'NC 1K: \\nu_{l} n \\rightarrow \\nu_{l} \\Lambda K^{+}', "NC DIS (2 GeV < W): \\nu_{l} N \\rightarrow \\nu_{l} N' mesons", 'NC elastic: \\nu_{l} n \\rightarrow \\nu_{l} n','NC elastic: \\nu_{l} p \\rightarrow \\nu_{l} p']
+reaction_codes_long_labels=['Total', 'CCQE: $\\nu_{l} n \\rightarrow l^{-} p$', 'CC 1$\\pi: \\nu_{l} p \\rightarrow l^{-} p \\pi^{+}$', 'CC 1$\\pi: \\nu_{l} n \\rightarrow l^{-} p \\pi^{0}$', 'CC 1$\\pi: \\nu_{l} n \\rightarrow l^{-} n \\pi^{+}$', 'CC coherent-$\\pi: \\nu_{l} ^{16}O \\rightarrow l^{-} ^{16}O \\pi^{+}$', '1$\\gamma from \\Delta: \\nu_{l} n \\rightarrow l^{-} p \\gamma$', "CC (1.3 < W < 2 GeV): $\\nu_{l} N \\rightarrow l^{-} N' multi-\\pi", 'CC 1$\\eta: \\nu_{l} n \\rightarrow l^{-} p \\eta$', 'CC 1K: $\\nu_{l} n \\rightarrow l^{-} \\Lambda K^{+}$', "CC DIS (2 GeV $\leq W$): $\\nu_{l} N \\rightarrow l^{-} N' mesons$", 'NC 1$\\pi: \\nu_{l} n \\rightarrow \\nu_{l} n \\pi^{0}$', 'NC 1$\\pi: \\nu_{l} p \\rightarrow \\nu_{l} p \\pi^{0}$', 'NC 1$\\pi: \\nu_{l} n \\rightarrow \\nu_{l} p \\pi^{-}$', 'NC 1$\\pi: \\nu_{l} p \\rightarrow \\nu_{l} n \\pi^{+}$', 'NC coherent-\\pi: $\\nu_{l} ^{16}O \\rightarrow \\nu_{l} ^{16}O \\pi^{0}$', '1\\gamma from \\Delta: $\\nu_{l} n \\rightarrow \\nu_{l} n \\gamma$', '1\\gamma from \\Delta: $\\nu_{l} p \\rightarrow \\nu_{l} p \\gamma$', 'NC (1.3 < W < 2 GeV): $\\nu_{l} N \\rightarrow \\nu_{l} N multi-\\pi$', 'NC 1\\eta: $\\nu_{l} n \\rightarrow \\nu_{l} n \\eta$', 'NC 1\\eta: $\\nu_{l} p \\rightarrow \\nu_{l} p \\eta$', 'NC 1K: $\\nu_{l} n \\rightarrow \\nu_{l} \\Lambda K^{0}$', 'NC 1K: $\\nu_{l} n \\rightarrow \\nu_{l} \\Lambda K^{+}$', "NC DIS (2 GeV < W): $\\nu_{l} N \\rightarrow \\nu_{l} N' mesons", 'NC elastic: $\\nu_{l} n \\rightarrow \\nu_{l} n','NC elastic: $\\nu_{l} p \\rightarrow \\nu_{l} p']
 reaction_codes_short_labels_dict=dict(zip(reaction_codes,reaction_codes_short_labels))
 reaction_codes_long_labels_dict=dict(zip(reaction_codes,reaction_codes_long_labels))
 
@@ -66,7 +68,7 @@ class DataContainer:
 
 
 def print_classification_report(data:DataContainer|tuple[dict,SparseEvent],**kwargs):
-    if (not isinstance(data,DataContainer)): # if the data is not a DataContainer, it must be the input of the class to construct the object
+    if (not data.__class__.__name__=="DataContainer"): # if the data is not a DataContainer, it must be the input of the class to construct the object
         data=DataContainer(*data) # construct the DataContainer out of the provided data
     print(classification_report(data.val_true, data.val_pred, digits=3, target_names=target_names))
     
@@ -80,7 +82,7 @@ def plot_pred_proba(data:DataContainer|tuple[dict,SparseEvent],
                     titles_pred_proba=["True Vertex activity", "True Single P", "True Noise"],
                      **kwargs):
     
-    if (not isinstance(data,DataContainer)): # if the data is not a DataContainer, it must be the input of the class to construct the object
+    if (not data.__class__.__name__=="DataContainer"): # if the data is not a DataContainer, it must be the input of the class to construct the object
         data=DataContainer(*data) # construct the DataContainer out of the provided data
     
     labels=labels_pred_proba
@@ -117,7 +119,7 @@ def plot_crossed_distribution(data:DataContainer|tuple[dict,SparseEvent],
                                 model_name:str='',
                                 use_log_scale:bool=use_log_scale,
                                 **kwargs):
-    if (not isinstance(data,DataContainer)): # if the data is not a DataContainer, it must be the input of the class to construct the object
+    if (not data.__class__.__name__=="DataContainer"): # if the data is not a DataContainer, it must be the input of the class to construct the object
         data=DataContainer(*data) # construct the DataContainer out of the provided data
     
     colors=["#003f5c", "#1e955a", "#ef5675", "#ffa600"]
@@ -232,7 +234,7 @@ def plot_perf_distance(data:DataContainer|tuple[dict,SparseEvent],
                         x_lim_dist:tuple[float]=x_lim_dist,
                         **kwargs):
     
-    if (not isinstance(data,DataContainer)): # if the data is not a DataContainer, it must be the input of the class to construct the object
+    if (not data.__class__.__name__=="DataContainer"): # if the data is not a DataContainer, it must be the input of the class to construct the object
         data=DataContainer(*data) # construct the DataContainer out of the provided data
         
     prec,reca,f1,bins=_get_perf_binning(data,data.distance_to_vertex,lims=x_lim_dist,Nbins=Nbins,use_log_scale=use_log_scale,**kwargs)
@@ -256,7 +258,7 @@ def plot_perf_charge(data:DataContainer|tuple[dict,SparseEvent],
                         x_lim_charge:tuple[float]=x_lim_charge,
                         **kwargs):
     
-    if (not isinstance(data,DataContainer)): # if the data is not a DataContainer, it must be the input of the class to construct the object
+    if (not data.__class__.__name__=="DataContainer"): # if the data is not a DataContainer, it must be the input of the class to construct the object
         data=DataContainer(*data) # construct the DataContainer out of the provided data
         
     prec,reca,f1,bins=_get_perf_binning(data,data.charge,lims=x_lim_charge,Nbins=Nbins,use_log_scale=use_log_scale,**kwargs)
@@ -356,7 +358,7 @@ def plot_perf_particle(data:DataContainer|tuple[dict,SparseEvent],
                         include_pdg_0:bool=True,
                         **kwargs):
     
-    if (not isinstance(data,DataContainer)): # if the data is not a DataContainer, it must be the input of the class to construct the object
+    if (not data.__class__.__name__=="DataContainer"): # if the data is not a DataContainer, it must be the input of the class to construct the object
         data=DataContainer(*data) # construct the DataContainer out of the provided data
         
     labels=[particle.Particle.from_pdgid(part).name for part in particles_to_consider_pdg]+['other']
@@ -375,7 +377,7 @@ def plot_perf_interaction(data:DataContainer|tuple[dict,SparseEvent],
                         reaction_codes:list[int]=reaction_codes[1:],
                         **kwargs):
     
-    if (not isinstance(data,DataContainer)): # if the data is not a DataContainer, it must be the input of the class to construct the object
+    if (not data.__class__.__name__=="DataContainer"): # if the data is not a DataContainer, it must be the input of the class to construct the object
         data=DataContainer(*data) # construct the DataContainer out of the provided data
         
     labels=[reaction_codes_short_labels_dict[key] for key in reaction_codes]+['other']
@@ -474,7 +476,7 @@ def plot_perf_distance_by_tag(data:DataContainer|tuple[dict,SparseEvent],
                         x_lim_dist:tuple[float]=x_lim_dist,
                         **kwargs):
     
-    if (not isinstance(data,DataContainer)): # if the data is not a DataContainer, it must be the input of the class to construct the object
+    if (not data.__class__.__name__=="DataContainer"): # if the data is not a DataContainer, it must be the input of the class to construct the object
         data=DataContainer(*data) # construct the DataContainer out of the provided data
         
     eff,bins,vals=_get_perf_binning_by_tag(data,data.distance_to_vertex,lims=x_lim_dist,Nbins=Nbins,use_log_scale=use_log_scale,**kwargs)
@@ -498,7 +500,7 @@ def plot_perf_charge_by_tag(data:DataContainer|tuple[dict,SparseEvent],
                         x_lim_charge:tuple[float]=x_lim_charge,
                         **kwargs):
     
-    if (not isinstance(data,DataContainer)): # if the data is not a DataContainer, it must be the input of the class to construct the object
+    if (not data.__class__.__name__=="DataContainer"): # if the data is not a DataContainer, it must be the input of the class to construct the object
         data=DataContainer(*data) # construct the DataContainer out of the provided data
         
     eff,bins,vals=_get_perf_binning_by_tag(data,data.charge,lims=x_lim_charge,Nbins=Nbins,use_log_scale=use_log_scale,**kwargs)
@@ -615,7 +617,7 @@ def plot_perf_particle_by_tag(data:DataContainer|tuple[dict,SparseEvent],
                         include_pdg_0:bool=True,
                         **kwargs):
     
-    if (not isinstance(data,DataContainer)): # if the data is not a DataContainer, it must be the input of the class to construct the object
+    if (not data.__class__.__name__=="DataContainer"): # if the data is not a DataContainer, it must be the input of the class to construct the object
         data=DataContainer(*data) # construct the DataContainer out of the provided data
         
     labels=[particle.Particle.from_pdgid(part).name for part in particles_to_consider_pdg]+['other']
@@ -634,7 +636,7 @@ def plot_perf_interaction_by_tag(data:DataContainer|tuple[dict,SparseEvent],
                         reaction_codes:list[int]=reaction_codes[1:],
                         **kwargs):
     
-    if (not isinstance(data,DataContainer)): # if the data is not a DataContainer, it must be the input of the class to construct the object
+    if (not data.__class__.__name__=="DataContainer"): # if the data is not a DataContainer, it must be the input of the class to construct the object
         data=DataContainer(*data) # construct the DataContainer out of the provided data
         
     labels=[reaction_codes_short_labels_dict[key] for key in reaction_codes]+['other']
@@ -650,7 +652,7 @@ def plot_event_display(data:DataContainer|tuple[dict,SparseEvent],
                      model_name:str='',
                      **kwargs):
     
-    if (not isinstance(data,DataContainer)): # if the data is not a DataContainer, it must be the input of the class to construct the object
+    if (not data.__class__.__name__=="DataContainer"): # if the data is not a DataContainer, it must be the input of the class to construct the object
         data=DataContainer(*data) # construct the DataContainer out of the provided data
     
     X=data.all_results['c'][i].copy()
@@ -687,6 +689,47 @@ def plot_event_display(data:DataContainer|tuple[dict,SparseEvent],
     return fig
 
 
+
+def plot_distance_by_interaction(data:DataContainer|tuple[dict,SparseEvent],
+                                show:bool=True,
+                                savefig_path:str=None,
+                                reaction_codes:list[int]=[1,12,26],
+                                **kwargs):
+
+    if (not data.__class__.__name__=="DataContainer"): # if the data is not a DataContainer, it must be the input of the class to construct the object
+        data=DataContainer(*data) # construct the DataContainer out of the provided data
+    
+    fig,axes=plt.subplots(nrows=1,ncols=len(reaction_codes),figsize=(10*len(reaction_codes),8), facecolor="white")
+    for k,ax in enumerate(axes):
+        indexes=(np.abs(data.aux[:,1])==reaction_codes[k])*(data.val_true==0)
+        distance_to_vertex=np.sort(data.distance_to_vertex[indexes])
+        ax.plot(distance_to_vertex,np.arange(len(distance_to_vertex))/len(distance_to_vertex),label="CDF of VA hits")
+        ax.set_xlabel("Distance to the vertex (mm)")
+        ax.set_ylabel("Cumulative distribution")
+        ax.set_title(reaction_codes_long_labels_dict[reaction_codes[k]])
+        # ax.set_title(reaction_codes_short_labels_dict[reaction_codes[k]])
+        ax.set_xlim((0.,100.))
+        ax.set_ylim((0.,1.))
+        ax.set_xticks(np.linspace(0.,100.,11))
+        ax.set_xticks(np.linspace(0.,100.,21), minor=True)
+        ax.set_yticks(np.linspace(0.,1.,11))
+        ax.set_yticks(np.linspace(0.,1.,21), minor=True)
+        ax.grid()
+        ax.grid(which = 'minor', alpha = 0.2)
+        ax.legend()
+    
+    fig.suptitle("Cumulative distribution of hit distance to the vertex for VA hits depending on the neutrino interaction")
+        
+    if savefig_path is not None:
+        fig.savefig(savefig_path,dpi=delfault_dpi)
+        
+    if show:
+        fig.show()
+        
+    return fig
+
+
+
 def plots(data:DataContainer|tuple[dict,SparseEvent],
           plots_chosen:list[str]=["pred_proba","crossed_distribution","perf_charge","perf_distance","perf_charge_by_tag","perf_distance_by_tag","perf_interaction","perf_particle","perf_interaction_by_tag","perf_particle_by_tag","event_display"],
         show:bool=True,
@@ -694,7 +737,7 @@ def plots(data:DataContainer|tuple[dict,SparseEvent],
         model_name:str='',
         **kwargs):
     
-    if (not isinstance(data,DataContainer)): # if the data is not a DataContainer, it must be the input of the class to construct the object
+    if (not data.__class__.__name__=="DataContainer"): # if the data is not a DataContainer, it must be the input of the class to construct the object
         data=DataContainer(*data) # construct the DataContainer out of the provided data
 
     figs=[]

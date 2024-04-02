@@ -19,15 +19,18 @@ def rgb_to_hex(rgb):
 
 
 def plotly_event_general(pos3d:np.array=None,
-                    image:np.array=None, 
+                    image:np.array=None,
+                    track:np.array=None, 
                     max_energy:float=200,
                     cube_size:float = 10,
                     energies:np.array=None,
                     xyz_ranges:list[tuple[float,float]]=np.array([[-985.92, +985.92],[-257.56, +317.56],[-2888.78, -999.1]]),
                     fig=None,
                     cmap:str='Wistia',
+                    track_color:str="#11a337",
                     title:str="Particles interacting in SFG detector",
                     label:str='Hit',
+                    track_label:str|list[str]='Track',
                     pdg:np.array=None,
                     vertex:tuple[list[float],list[float],list[float]]=None,
                     center:bool=False,
@@ -53,15 +56,20 @@ def plotly_event_general(pos3d:np.array=None,
         x1, y1, z1 = np.nonzero(image_int)
         opacity = np.clip(image / (max_energy * 0.5), 0, 1)
         
-    else:
-        if pos3d is None:
-            raise ValueError("Must provide either pos3d or image")
+    elif pos3d is not None:
         if pos3d.shape[-1]!= 3:
             raise ValueError("pos3d must be a 3D array")
         reshaped_pos3d = np.reshape(pos3d, (-1,3))
         x1, y1, z1 = reshaped_pos3d[...,0], reshaped_pos3d[...,1], reshaped_pos3d[...,2]
         if energies is not None:
             reshaped_energies=np.reshape(energies, (-1,))
+    
+    elif track is not None:
+        if track.shape[-1]!= 3:
+            raise ValueError("track must be a 3D array")
+        
+    else:
+        raise ValueError("Must provide either pos3d or image or track")
 
     # Create a 3D figure if not provided
     if fig is None:
@@ -77,47 +85,48 @@ def plotly_event_general(pos3d:np.array=None,
     colors = [rgb_to_hex(custom_cmap(value / N)) for value in values]
 
     # Create a mesh3d trace for each voxel (cube)
-    for j, (x, y, z) in enumerate(zip(x1, y1, z1)):
-        
-        name=label
-        
-        if image is not None:
-            op=opacity[x,y,z]
-            cl=colors[int(image[x, y, z])]
-        else:
-            op=0.6
-            if energies is not None:
-                cl=colors[int(reshaped_energies[j])]
+    if pos3d is not None or image is not None:
+        for j, (x, y, z) in enumerate(zip(x1, y1, z1)):
+            
+            name=label
+            
+            if image is not None:
+                op=opacity[x,y,z]
+                cl=colors[int(image[x, y, z])]
             else:
-                cl=np.random.choice(colors)
-        
-        if pdg is not None:
-            if pos3d is not None:
-                # old_index=np.unravel_index(j, pos3d.shape[:-1])
-                particle_pdg=pdg[j]
-                if j:
-                    if len(particle_pdg)>0:
-                        name=f"{particle_pdg}"
-          
-        cube = go.Mesh3d(
-            x=[x, x, x + cube_size, x + cube_size, x, x, x + cube_size, x + cube_size],
-            y=[y, y + cube_size, y + cube_size, y, y, y + cube_size, y + cube_size, y],
-            z=[z, z, z, z, z + cube_size, z + cube_size, z + cube_size, z + cube_size],
-            i=[7, 0, 0, 0, 4, 4, 6, 6, 4, 0, 3, 2],
-            j=[3, 4, 1, 2, 5, 6, 5, 2, 0, 1, 6, 3],
-            k=[0, 7, 2, 3, 6, 7, 1, 1, 5, 5, 7, 6],
-            colorbar=dict(
-                thickness=20,
-                title='Voxel Values',
-            ),
-            color=cl,
-            flatshading=True,
-            opacity=op,
-            legendgroup=label,
-            name=name,
-            showlegend=(j==0),
-        )
-        fig.add_trace(cube)
+                op=0.6
+                if energies is not None:
+                    cl=colors[int(reshaped_energies[j])]
+                else:
+                    cl=np.random.choice(colors)
+            
+            if pdg is not None:
+                if pos3d is not None:
+                    # old_index=np.unravel_index(j, pos3d.shape[:-1])
+                    particle_pdg=pdg[j]
+                    if j:
+                        if len(particle_pdg)>0:
+                            name=f"{particle_pdg}"
+            
+            cube = go.Mesh3d(
+                x=[x - cube_size/2, x - cube_size/2, x + cube_size/2, x + cube_size/2, x - cube_size/2, x - cube_size/2, x + cube_size/2, x + cube_size/2],
+                y=[y - cube_size/2, y + cube_size/2, y + cube_size/2, y - cube_size/2, y - cube_size/2, y + cube_size/2, y + cube_size/2, y - cube_size/2],
+                z=[z - cube_size/2, z - cube_size/2, z - cube_size/2, z - cube_size/2, z + cube_size/2, z + cube_size/2, z + cube_size/2, z + cube_size/2],
+                i=[7, 0, 0, 0, 4, 4, 6, 6, 4, 0, 3, 2],
+                j=[3, 4, 1, 2, 5, 6, 5, 2, 0, 1, 6, 3],
+                k=[0, 7, 2, 3, 6, 7, 1, 1, 5, 5, 7, 6],
+                colorbar=dict(
+                    thickness=20,
+                    title='Voxel Values',
+                ),
+                color=cl,
+                flatshading=True,
+                opacity=op,
+                legendgroup=label,
+                name=name,
+                showlegend=(j==0),
+            )
+            fig.add_trace(cube)
     
     # Adds the vertex point
     if vertex is not None:
@@ -126,6 +135,23 @@ def plotly_event_general(pos3d:np.array=None,
                            marker={"size":10.,"color":"#860021"},
                            name="Vertex")
         fig.add_trace(point)
+        
+    # Adds the tracks:
+    if track is not None:
+        if len(track.shape)==2:
+            track_=track[None,...]
+            if type(track_label) is not list:
+                track_label=[track_label]
+        else:
+            track_=track
+            
+        for k,t in enumerate(track_):
+            trk=go.Scatter3d(x=t[:,0],y=t[:,1],z=t[:,2],
+                             mode="markers", # can be changed to "lines+markers" to include lines connecting points
+                             marker={"size":4.,"color":track_color},
+                             name=track_label[k],
+                             )
+            fig.add_trace(trk)
 
     # Set the margin to remove all margins
     fig.update_layout(margin=dict(l=0, r=0, t=0, b=0))
@@ -211,4 +237,25 @@ def plotly_event_hittag(pos3d:np.array=None,
                                 **kwargs)
         
     return fig
+
+
+def plotly_event_nodes(track:np.array,
+                        general_label:str="Track",
+                        color:str="#11a337",
+                        fig=None,
+                        vertex:tuple[list[float],list[float],list[float]]=None,
+                        # pdg:np.array=None,
+                        **kwargs
+                        ):
+    """
+    Plots the tracks of particles in SFG given their nodes positions.
+    """
     
+    fig=plotly_event_general(track=track,
+                             track_label=general_label,
+                             track_color=color,
+                             vertex=vertex,
+                             fig=fig,
+                             **kwargs)
+    
+    return fig

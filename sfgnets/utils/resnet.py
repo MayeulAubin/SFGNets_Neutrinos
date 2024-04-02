@@ -38,9 +38,6 @@ import MinkowskiEngine as ME
 from MinkowskiEngine.modules.resnet_block import BasicBlock, Bottleneck
 
 
-if not os.path.isfile("1.ply"):
-    print('Downloading an example pointcloud...')
-    urlretrieve("https://bit.ly/3c2iLhg", "1.ply")
 
 
 def load_file(file_name):
@@ -238,6 +235,11 @@ class ResFieldNet101(ResFieldNetBase):
 
 
 if __name__ == "__main__":
+    if not os.path.isfile("1.ply"):
+        print('Downloading an example pointcloud...')
+        urlretrieve("https://bit.ly/3c2iLhg", "1.ply")
+
+    
     # loss and network
     voxel_size = 0.02
     N_labels = 10

@@ -14,7 +14,7 @@ import math
 from copy import deepcopy
 
 x_in_channels=2
-y_out_channels=10+len(particles_classes.keys())
+y_out_channels=np.sum(PGunEvent.TARGETS_LENGTHS)
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -78,7 +78,7 @@ class SumLoss(nn.Module):
         return len(self.losses)
     
     def __getitem__(self, key: int | slice | list[int]):
-        if key is list:
+        if type(key) is list:
             losses=[self.losses[k] for k in key]
             weights=[self.weights[k] for k in key]
         else:
@@ -96,6 +96,26 @@ class SumLoss(nn.Module):
             loss_composition.append(_loss.item())
             
         return loss/sum(self.weights), loss_composition
+    
+    def rebuild_partial_losses(self):
+        """
+        In the case where a __getitem__ has been applied, the indexes of the partial losses might be wrong.
+        This function redefines the indexes of the partial losses to make sure that they follow back to back
+        """
+        k_index,k_index_target=0,0
+        for loss in self.losses:
+            if type(loss) is PartialLoss:
+                assert k_index==k_index_target, f"Mismatch of the indexes of prediction and targets for loss {loss} with values k_index: {k_index} and k_index_target: {k_index_target}"
+                length=len(loss.indexes)
+                loss.indexes=[k for k in range(k_index,k_index+length)]
+                k_index+=length
+                k_index_target=k_index
+            elif type(loss) is PartialClassificationLoss:
+                loss.index_target=k_index_target
+                k_index_target+=1
+                length=len(loss.indexes_pred)
+                loss.indexes_pred=[k for k in range(k_index,k_index+length)]
+                k_index+=length
     
     
     
@@ -158,21 +178,33 @@ class SumPerf(SumLoss):
         losses=[deepcopy(l) for l in sumloss.losses]
         return SumPerf(losses=losses, weights=weights)
 
-## Transformer parameters
-D_MODEL = 64
-N_HEAD = 8
-DIM_FEEDFORWARD = 128
-NUM_ENCODER_LAYERS = 5
+
+def create_baseline_model(x_in_channels:int=x_in_channels,
+                          y_out_channels:int=y_out_channels,
+                          device:torch.device=device):
+
+    return minkunet.MinkUNet34B(in_channels=x_in_channels, out_channels=y_out_channels, D=3).to(device)
 
 
-baseline_model=minkunet.MinkUNet34B(in_channels=x_in_channels, out_channels=y_out_channels, D=3).to(device)
+def create_transformer_model(x_in_channels:int=x_in_channels,
+                            y_out_channels:int=y_out_channels,
+                            device:torch.device=device,
+                            D_MODEL:int = 64,
+                            N_HEAD:int = 8,
+                            DIM_FEEDFORWARD:int = 128,
+                            NUM_ENCODER_LAYERS:int = 5):
 
-transformer_model = FittingTransformer(num_encoder_layers=NUM_ENCODER_LAYERS,
+    return FittingTransformer(num_encoder_layers=NUM_ENCODER_LAYERS,
                                  d_model=D_MODEL,
                                  n_head=N_HEAD,
                                  input_size=3+x_in_channels,
                                  output_size=y_out_channels,
                                  dim_feedforward=DIM_FEEDFORWARD).to(device)
+
+
+
+baseline_model=create_baseline_model()
+transformer_model=create_transformer_model()
 
 
 PAD_IDX=-1.
@@ -188,10 +220,10 @@ loss_fn=SumLoss(losses=[
                             PartialClassificationLoss(nn.CrossEntropyLoss(), [10+i for i in range(len(particles_classes.keys()))], 10), # particle class
                         ],
                 weights=[
-                            2.e5, # node position
+                            1.e6, # node position
                             1.e2, # node direction
                             2.e3, # number of particles
-                            5.e4, # energy deposited
+                            5.e5, # energy deposited
                             1.e1, # particle charge
                             5.e2, # particle mass
                             5.e-1, # particle class
@@ -264,7 +296,8 @@ def collate_transformer(batch):
    
     coords = [d['c']for d in filter(filtering_events,batch)]
 
-    feats = [torch.cat([d['x'],d['c']],dim=-1) for d in filter(filtering_events,batch)]
+    # feats = [torch.cat([d['x'],d['c']],dim=-1) for d in filter(filtering_events,batch)] # order for the first 5 models
+    feats = [torch.cat([d['c'],d['x']],dim=-1) for d in filter(filtering_events,batch)] # saul's order
 
     targets = [d['y'] for d in filter(filtering_events,batch)]
 
@@ -342,13 +375,17 @@ def execute_model(model:torch.nn.Module,
                 device:torch.device=device,
                 do_we_consider_aux:bool=False,
                 do_we_consider_coord:bool=False,
-                do_we_consider_feat:bool=False,):
+                do_we_consider_feat:bool=False,
+                do_we_consider_event_id:bool=False,
+                last_event_id:int=None,
+                ) -> tuple[Tensor, Tensor, Tensor, Tensor | None, Tensor | None, Tensor | None, Tensor | None]:
     """
     Returns the prediction, target and mask for a given model. Adapts whether it is 'minkowski' type (SparseTensors) or 'transformer' type (PaddedSequence).
     """
     aux=None
     coord=None
     feats=None
+    event_id=None
     
     if model_type=='minkowski':
         # arranging the data to be into Sparse Minkowski Tensors
@@ -371,6 +408,9 @@ def execute_model(model:torch.nn.Module,
         # if necessary extract the features
         if do_we_consider_feat:
             feats=data['f'].F
+        # if necessary extract the event id
+        if do_we_consider_event_id:
+            event_id=data['f'].C[:,0]+last_event_id
             
     elif model_type=='transformer':
         features=data['f'].to(device)
@@ -397,13 +437,16 @@ def execute_model(model:torch.nn.Module,
         # if necessary extract the features
         if do_we_consider_feat:
             feats=torch.nn.utils.rnn.pack_padded_sequence(features, data['lens'], batch_first=False, enforce_sorted=False).data
+        # if necessary extract the event id
+        if do_we_consider_event_id:
+            event_id=torch.nn.utils.rnn.pack_padded_sequence(torch.ones(features.shape[:-1])[...,None]*torch.arange(features.shape[1])[None,:,None]+last_event_id, data['lens'], batch_first=False, enforce_sorted=False).data
         # change the mask data to fit the format of pred, targs, ...
         mask=torch.nn.utils.rnn.pack_padded_sequence(mask, data['lens'], batch_first=False, enforce_sorted=False).data
         
     else:
         raise ValueError(f"Wrong model type {model_type}")
     
-    return pred, targ, mask, aux, coord, feats
+    return pred, targ, mask, aux, coord, feats, event_id
     
 
 
@@ -418,14 +461,15 @@ def train(model:torch.nn.Module,
           device:torch.device=device, 
           progress_bar:bool=False,
           benchmarking:bool=False,
-          world_size:int=1,):
+          world_size:int=1,
+          notebook_tqdm:bool=False,):
     
     
     model.train()
     
     batch_size = loader.batch_size
     n_batches = int(math.ceil(len(loader.dataset) / (batch_size*world_size)))
-    train_loop = tqdm.tqdm(enumerate(loader), total=n_batches, disable=(not progress_bar), desc=f"Train loop {device}", position=1, leave=False)
+    train_loop = tqdm.notebook.tqdm(enumerate(loader), total=n_batches, disable=(not progress_bar), desc=f"Train loop {device}", position=1, leave=False) if notebook_tqdm else tqdm.tqdm(enumerate(loader), total=n_batches, disable=(not progress_bar), desc=f"Train loop {device}", position=1, leave=False)
     
     time_load, time_model, time_steps, t0= 0., 0., 0., time.perf_counter()
     
@@ -438,7 +482,7 @@ def train(model:torch.nn.Module,
         
         t0=time.perf_counter()
         
-        pred,targ, _m, _a, _c, _f = execute_model(model=model,
+        pred,targ, _m, _a, _c, _f, _e = execute_model(model=model,
                                 data=data,
                                 model_type=model_type,
                                 device=device)
@@ -479,13 +523,14 @@ def test(model:torch.nn.Module,
           device:torch.device=device, 
           progress_bar:bool=False,
           benchmarking:bool=False,
-          world_size:int=1,):
+          world_size:int=1,
+          notebook_tqdm:bool=False,):
     
     model.eval()
     
     batch_size = loader.batch_size
     n_batches = int(math.ceil(len(loader.dataset) / (batch_size*world_size)))
-    test_loop = tqdm.tqdm(enumerate(loader), total=n_batches, disable=(not progress_bar), desc=f"Test loop {device}", position=1, leave=False)
+    test_loop = tqdm.notebook.tqdm(enumerate(loader), total=n_batches, disable=(not progress_bar), desc=f"Test loop {device}", position=1, leave=False) if notebook_tqdm else tqdm.tqdm(enumerate(loader), total=n_batches, disable=(not progress_bar), desc=f"Test loop {device}", position=1, leave=False)
     
     sum_loss = 0.
     comp_loss=np.zeros(len(loss_func))
@@ -500,7 +545,7 @@ def test(model:torch.nn.Module,
         
         t0=time.perf_counter()
         
-        pred,targ, _m, _a, _c, _f = execute_model(model=model,
+        pred,targ, _m, _a, _c, _f, _e = execute_model(model=model,
                                 data=data,
                                 model_type=model_type,
                                 device=device)
@@ -545,41 +590,44 @@ def test_full(model:torch.nn.Module,
             progress_bar:bool=False,
             do_we_consider_aux:bool=False,
             do_we_consider_coord:bool=False,
-            do_we_consider_feat:bool=True,):
+            do_we_consider_feat:bool=True,
+            do_we_consider_event_id:bool=True,
+            max_batches:int=None,) -> dict[list[np.array]]:
     
     model.eval()
     
     batch_size = loader.batch_size
-    n_batches = int(math.ceil(len(loader.dataset) / batch_size))
+    
+    if max_batches is not None:
+        n_batches=max_batches
+    else:
+       n_batches = int(math.ceil(len(loader.dataset) / batch_size))
+       
     t = tqdm.tqdm(enumerate(loader), total=n_batches, disable=(not progress_bar), desc="Testing Track fitting net")
     
     
     sum_loss = 0.
+    last_event_id=0
     pred = []
-    feat=None
-    coord=None
+    feat=[] if do_we_consider_feat else None
+    coord=[] if do_we_consider_coord else None
     target=[]
-    aux=None
+    aux=[] if do_we_consider_aux else None
     mask=[]
-    
-    if do_we_consider_aux:
-        aux=[]
-    
-    if do_we_consider_coord:
-        coord=[]
-    
-    if do_we_consider_feat:
-        feat=[]
+    event_id=[] if do_we_consider_event_id else None
     
     for i, data in t:
         
-        _pred,_targ, _mask, _aux, _coord, _feat = execute_model(model=model,
+        _pred,_targ, _mask, _aux, _coord, _feat, _event_id = execute_model(model=model,
                                                     data=data,
                                                     model_type=model_type,
                                                     device=device,
                                                     do_we_consider_aux=do_we_consider_aux,
                                                     do_we_consider_coord=do_we_consider_coord,
-                                                    do_we_consider_feat=do_we_consider_feat,)
+                                                    do_we_consider_feat=do_we_consider_feat,
+                                                    do_we_consider_event_id=do_we_consider_event_id,
+                                                    last_event_id=last_event_id,
+                                                    )
         
         pred.append(_pred.cpu().detach().numpy())
         target.append(_targ.cpu().detach().numpy())
@@ -590,10 +638,17 @@ def test_full(model:torch.nn.Module,
             coord.append(_coord.cpu().detach().numpy())
         if do_we_consider_feat:
             feat.append(_feat.cpu().detach().numpy())
+        if do_we_consider_event_id:
+            event_id.append(_event_id.cpu().detach().numpy())
+            last_event_id=event_id[-1].max()
+        
+        if i>n_batches:
+            break
+        
     
         
     torch.cuda.empty_cache() # release the GPU memory      
-    return {'predictions':pred,'f':feat,'c':coord,'y':target, 'aux':aux, 'mask':mask}
+    return {'predictions':pred,'f':feat,'c':coord,'y':target, 'aux':aux, 'mask':mask, 'event_id':event_id}
     
 
 
@@ -604,19 +659,33 @@ def measure_performances(results_from_test_full:dict,
                         model_type:str='minkowski', 
                         do_we_consider_aux:bool=False,
                         do_we_consider_coord:bool=False,
-                        do_we_consider_feat:bool=True,):
+                        do_we_consider_feat:bool=True,
+                        do_we_consider_event_id:bool=True,) -> dict[np.array]:
     aux=None
     coord=None
     features=None
+    event_id=None
+    
     
     if do_we_consider_feat:
         features=np.vstack(results_from_test_full['f'])
         if model_type=='minkowski':
-            features=dataset.scaler_x.inverse_transform(features) # in minkowski models the features do not contain the coordinates
+            features=features # in minkowski models the features do not contain the coordinates
         elif model_type=='transformer':
-            features=dataset.scaler_x.inverse_transform(features[:,:-3]) # in transformer models we must remove the coordinates from the features
+            features=features[:,3:] # saul order # in transformer models we must remove the coordinates from the features
+            # features=features[:,:-3] # order for the first 5 models # in transformer models we must remove the coordinates from the features
         else:
             raise ValueError(f"Wrong model type {model_type}")
+        
+        if dataset.inputs is None:
+            ## Use the full scaler
+            features=dataset.scaler_x.inverse_transform(features)
+        else:
+            ## We are using only some parts of the input
+            _min=dataset.scaler_y.min_[dataset.inputs]
+            _scale=dataset.scaler_y.scale_[dataset.inputs]
+            features-=_min
+            features/=_scale
     
     if do_we_consider_aux:
         aux=np.vstack(results_from_test_full['aux'])
@@ -626,31 +695,49 @@ def measure_performances(results_from_test_full:dict,
         if dataset.scale_coordinates:
             coord=dataset.scaler_c.inverse_transform(coord)
         else:
-            coord=transform_inverse_cube(coord)
+            transform_inverse_cube(coord)
     
     mask=np.vstack(results_from_test_full['mask'])
-    
     targets=np.vstack(results_from_test_full['y'])
-    targets[:,:10]=dataset.scaler_y.inverse_transform(targets[:,:10])
-    
     _pred=np.vstack(results_from_test_full['predictions'])
-    _pred[:,:10]=dataset.scaler_y.inverse_transform(_pred[:,:10])
+    
+    if dataset.y_indexes_with_scale is None:
+        ## If all targets are considered, we aplly usual inverse transformation
+        targets[:,:10]=dataset.scaler_y.inverse_transform(targets[:,:10])
+        _pred[:,:10]=dataset.scaler_y.inverse_transform(_pred[:,:10])
+        pred=np.zeros_like(targets)
+        pred[:,:10]=_pred[:,:10]
+        pred[:,10]=np.argmax(_pred[:,10:],axis=-1)
+        
+    else:
+        ## If only some targets are considered, we restrict the inverse transformation to those
+        _min=dataset.scaler_y.min_[dataset.y_indexes_with_scale]
+        _scale=dataset.scaler_y.scale_[dataset.y_indexes_with_scale]
+        targets-=_min
+        targets/=_scale
+        _pred-=_min
+        _pred/=_scale
+        if dataset.targets_n_classes[-1]>0:
+            ## If we have some class predictions, we need to argmax
+            pred=np.zeros_like(targets)
+            pred[:,:(len(targets)-1)]=_pred[:,:(len(targets)-1)]
+            pred[:,(len(targets)-1)]=np.argmax(_pred[:,(len(targets)-1):],axis=-1)
+        else:
+            pred=_pred
     
     targets_=torch.Tensor(targets*mask).to(device)
     pred_=torch.Tensor(_pred*mask).to(device)
-    
-    
+    del _pred
+
     scores=perf_func(pred_,targets_)
     del pred_, targets_
     
-    pred=np.zeros_like(targets)
-    pred[:,:10]=_pred[:,:10]
-    pred[:,10]=np.argmax(_pred[:,10:],axis=-1)
-    del _pred
-    
     scores=scores.cpu().numpy()
     
-    return {'predictions':pred, 'f':features, 'c':coord, 'y':targets, 'aux':aux, 'mask':mask, 'scores':scores}    
+    if do_we_consider_event_id:
+        event_id=np.vstack(results_from_test_full['event_id'])
+    
+    return {'predictions':pred, 'f':features, 'c':coord, 'y':targets, 'aux':aux, 'mask':mask, 'scores':scores, 'event_id':event_id}    
         
 
 
@@ -672,7 +759,10 @@ def training(device:torch.device,
             benchmarking:bool =False,
             multi_GPU:bool=False,
             world_size:int=1,
-            save_model_path:str=None,):
+            save_model_path:str=None,
+            num_workers:int=24,
+            notebook_tqdm:bool=False,
+            ):
     
     # Select the correct collate function
     if model_type=='minkowski':
@@ -690,7 +780,8 @@ def training(device:torch.device,
                                                         val_fraction=val_fraction,
                                                         seed=seed,
                                                         multi_GPU=multi_GPU,
-                                                        collate=collate_fn)
+                                                        collate=collate_fn,
+                                                        num_workers=num_workers)
     
     LOSSES=[[],[]]
     COMP_LOSSES=[[],[]]
@@ -702,11 +793,15 @@ def training(device:torch.device,
     # print("Starting training...")
     j=save_model_path.split("_")[-1].split(".")[0] # extract the #j div of the save path
     
-    epoch_bar=tqdm.tqdm(range(0, epochs),
+    epoch_bar=tqdm.notebook.tqdm(range(0, epochs),
                             desc=f"Training Track fitting net {j} {model_type}",
                             disable=(not progress_bar),
                             position= 0,
-                            leave=True,)
+                            leave=True,) if notebook_tqdm else tqdm.tqdm(range(0, epochs),
+                                                                        desc=f"Training Track fitting net {j} {model_type}",
+                                                                        disable=(not progress_bar),
+                                                                        position= 0,
+                                                                        leave=True,)
 
     for epoch in epoch_bar:
 
@@ -731,7 +826,8 @@ def training(device:torch.device,
                     device=device, 
                     progress_bar=sub_progress_bars,
                     benchmarking=benchmarking,
-                    world_size=world_size)
+                    world_size=world_size,
+                    notebook_tqdm=notebook_tqdm)
         
         if benchmarking:
             print(f"Effective train time: {time.perf_counter()-t0:.2f} s")
@@ -750,7 +846,8 @@ def training(device:torch.device,
                                         device=device, 
                                         progress_bar=sub_progress_bars,
                                         benchmarking=benchmarking,
-                                        world_size=world_size)
+                                        world_size=world_size,
+                                        notebook_tqdm=notebook_tqdm)
         if benchmarking:
                 print(f"Effective validation time: {time.perf_counter()-t0:.2f} s")
                 
@@ -806,11 +903,12 @@ def training(device:torch.device,
     
 
     
-def main_worker(device,
-                dataset,
-                args,
-                world_size=1,
-                multi_GPU=False):
+def main_worker(device:torch.device,
+                dataset:PGunEvent,
+                args:dict,
+                world_size:int=1,
+                multi_GPU:bool=False):
+    global loss_fn
     
     #### Get the variables from args
     ## Get the first positional argument passed to the script (the j div of the training)
@@ -825,8 +923,14 @@ def main_worker(device,
 
     multi_pass=args.multi_pass
     
+    ## Select only the targets for the loss function
+    loss_fn=loss_fn[dataset.targets]
+    
     ## Replace the weights of the loss function
-    loss_fn.weights=args.weights
+    loss_fn.weights=[args.weights[k] for k in dataset.targets]
+    
+    if args.targets is not None:
+        loss_fn.rebuild_partial_losses()
     
     ## Get whether we will be using the baseline model or the transformer
     use_baseline=args.baseline
@@ -840,14 +944,9 @@ def main_worker(device,
     
     
     if use_baseline:
-        model=minkunet.MinkUNet34B(in_channels=x_in_channels, out_channels=y_out_channels, D=3).to(device)
+        model=create_baseline_model(y_out_channels=sum(dataset.targets_lengths)+sum(dataset.targets_n_classes))
     else:
-        model = FittingTransformer(num_encoder_layers=NUM_ENCODER_LAYERS,
-                                 d_model=D_MODEL,
-                                 n_head=N_HEAD,
-                                 input_size=3+x_in_channels,
-                                 output_size=y_out_channels,
-                                 dim_feedforward=DIM_FEEDFORWARD).to(device)
+        model=create_transformer_model(y_out_channels=sum(dataset.targets_lengths)+sum(dataset.targets_n_classes))
     
     print(model.__str__().split('\n')[0][:-1]) # Print the model name
     
@@ -935,6 +1034,7 @@ if __name__ == "__main__":
     parser.add_argument('--lr', type=float, default=1e-3, help='maximum learning rate for training (defines the scale of the learning rate)')
     parser.add_argument('--stop_after_epochs', type=int, default=40, help='maximum number of epochs without improvement before stopping the training (early termination)')
     parser.add_argument('-w','--weights', type=float, nargs=len(loss_fn), default=loss_fn.weights, help='weights for the loss functions')
+    parser.add_argument('-t','--targets', type=int, nargs="*", default=None, help='the target indices to include')
     args = parser.parse_args()
     
 
@@ -954,11 +1054,9 @@ if __name__ == "__main__":
 
     torch.multiprocessing.set_sharing_strategy('file_system')
     
-    ## Replace the weights of the loss function
-    loss_fn.weights=args.weights
-    
     ## Get whether we will be using the baseline model or the transformer
     use_baseline=args.baseline
+    
 
 
 
@@ -984,9 +1082,14 @@ if __name__ == "__main__":
                         files_suffix='npz',
                         scaler_file=args.scaler_file,
                         use_true_tag=True,
-                        scale_coordinates=(not use_baseline),)
+                        scale_coordinates=(not use_baseline),
+                        targets=args.targets)
+        
+        if args.targets is not None or args.weights!=loss_fn.weights:
+            print(f"Selected targets are: "+"".join([f"{dataset.targets_names[k]} ({args.weights[dataset.targets[k]]:.1e})  " for k in range(len(dataset.targets_names))]))
 
         t0=time.perf_counter()
+        
 
         if multi_GPU:
             # from sfgnets.track_fitting_net import main_worker

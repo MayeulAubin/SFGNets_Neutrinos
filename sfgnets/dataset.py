@@ -197,7 +197,7 @@ class SparseEvent(EventDataset):
     def __init__(self, 
                  root:str, 
                  shuffle:bool=False, 
-                 scaler_file:str="/scratch4/maubin/data/scaler_hittag.p", 
+                 scaler_file:str=None, 
                  multi_pass:int=1, 
                  recon_ver:bool=False,
                  aux:bool=False,
@@ -305,7 +305,7 @@ class SparseEvent(EventDataset):
             return None
         
 
-particles_classes={0:0, # no particle
+particles_classes={0:0, # no particle, or low energy neutrons
                    11:1, # e+
                    -11:2, # e-
                    22:3, # gamma
@@ -321,11 +321,17 @@ particles_classes={0:0, # no particle
 
 class PGunEvent(EventDataset):
     
+    TARGETS_NAMES=["position", "direction", "number_of_particles", "energy_deposited", "particle_charge", "particle_mass", "particle_pdg"]
+    TARGETS_LENGTHS=[3,3,1,1,1,1,1]
+    TARGETS_N_CLASSES=[0,0,0,0,0,0,len(particles_classes.keys())-1]
+    INPUT_NAMES=["charge","hittag"]
+    
     def __init__(self,
                  scaler_file:str=None,
                  use_true_tag:bool=True,
                  scale_coordinates:bool=False,
-                 y_indexes:int|slice|list[int]=None,
+                 targets:int|slice|list[int]=None,
+                 inputs:int|slice|list[int]=None,
                  **kwargs):
         
         super().__init__(**kwargs)
@@ -334,7 +340,27 @@ class PGunEvent(EventDataset):
         
         self.use_true_tag=use_true_tag
         self.scale_coordinates=scale_coordinates
-        self.y_indexes=y_indexes
+        self.targets=targets
+        self.inputs=list(inputs) if type(inputs) is int else inputs
+        
+        if targets is None: # then all targets are used, defined by the class variables
+            self.targets_names=self.__class__.TARGETS_NAMES
+            self.targets_lengths=self.__class__.TARGETS_LENGTHS
+            self.targets_n_classes=self.__class__.TARGETS_N_CLASSES
+            self.y_indexes=None
+            self.y_indexes_with_scale=None
+        else: # else the chosen targets are used
+            if targets is int:
+                targets=list(targets)
+            self.targets_names=list(np.array(self.__class__.TARGETS_NAMES)[targets])
+            self.targets_lengths=list(np.array(self.__class__.TARGETS_LENGTHS)[targets])
+            self.targets_n_classes=list(np.array(self.__class__.TARGETS_N_CLASSES)[targets])
+            indices_cumsum=[0]+list(np.cumsum(self.__class__.TARGETS_LENGTHS)) # this list we count the start indexes of all targets
+            self.y_indexes,self.y_indexes_with_scale=[],[]
+            for i in targets:
+                self.y_indexes+=list(range(indices_cumsum[i],indices_cumsum[i+1]))
+                if self.__class__.TARGETS_N_CLASSES[i]==0:
+                    self.y_indexes_with_scale+=list(range(indices_cumsum[i],indices_cumsum[i+1]))
         
         if scaler_file is not None:
             self.use_scaler=True
@@ -358,6 +384,9 @@ class PGunEvent(EventDataset):
         
         if self.use_scaler:
             x = self.scaler_x.transform(x)
+        
+        if self.inputs is not None:
+            x=x[:,self.inputs]
         
         return torch.FloatTensor(x)
     
@@ -403,7 +432,8 @@ class PGunEvent(EventDataset):
             return None
         
         if self.scale_coordinates:
-            c=self.scaler_c.transform(c) # scale coordinates for the Transformer
+            if self.use_scaler:
+                c=self.scaler_c.transform(c) # scale coordinates for the Transformer
         else:
             # Convert cube raw positions to cubes (for Minkowksi convolution)
             transform_cube(c)
