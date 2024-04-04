@@ -235,9 +235,9 @@ class ResFieldNet101(ResFieldNetBase):
 
 
 if __name__ == "__main__":
-    if not os.path.isfile("1.ply"):
-        print('Downloading an example pointcloud...')
-        urlretrieve("https://bit.ly/3c2iLhg", "1.ply")
+    # if not os.path.isfile("1.ply"):
+    #     print('Downloading an example pointcloud...')
+    #     urlretrieve("https://bit.ly/3c2iLhg", "1.ply")
 
     
     # loss and network

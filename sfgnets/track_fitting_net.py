@@ -1,5 +1,6 @@
 import torch
 import os
+os.environ["OMP_NUM_THREADS"]="16"
 from sfgnets.dataset import *
 from sfgnets.utils import minkunet
 from torch import Tensor
@@ -281,9 +282,13 @@ def create_scalers(root:str,
         pk.dump([scaler_x, scaler_y, scaler_c], fd)
 
 
-def filtering_events(x):
-    return x['c'] is not None and len(x['c'])<1000
+PREMASKING=True
 
+def filtering_events(x):
+    if PREMASKING:
+        return x['c'] is not None and len(x['c'][x['mask']>0])>2 and len(x['c'][x['mask']>0])<1000
+    else:
+        return x['c'] is not None and len(x['c'])<1000
 
 
 # function to collate data samples for a transformer
@@ -293,17 +298,35 @@ def collate_transformer(batch):
     """
     
     device=batch[0]['x'].device
-   
-    coords = [d['c']for d in filter(filtering_events,batch)]
-
-    # feats = [torch.cat([d['x'],d['c']],dim=-1) for d in filter(filtering_events,batch)] # order for the first 5 models
-    feats = [torch.cat([d['c'],d['x']],dim=-1) for d in filter(filtering_events,batch)] # saul's order
-
-    targets = [d['y'] for d in filter(filtering_events,batch)]
-
-    aux = [d['aux'] for d in filter(filtering_events,batch)]
     
-    masks = [d['mask']for d in filter(filtering_events,batch)]
+    if PREMASKING:
+        coords = [d['c'][d['mask']>0] for d in filter(filtering_events,batch)]
+
+        feats = [torch.cat([d['c'][d['mask']>0],d['x'][d['mask']>0]],dim=-1) for d in filter(filtering_events,batch)] # saul's order
+        
+        targets = [d['y'][d['mask']>0] for d in filter(filtering_events,batch)]
+        
+        aux = [d['aux'][d['mask']>0] for d in filter(filtering_events,batch)]
+        
+        # try:
+        #     aux = [d['aux'][d['mask']>0] for d in filter(filtering_events,batch)]
+        # except IndexError: # if aux are None, we will get an IndexError here
+        #     aux = [None for d in filter(filtering_events,batch)]
+        
+        masks = [d['mask'][d['mask']>0] for d in filter(filtering_events,batch)]
+        
+    
+    else:
+        coords = [d['c'] for d in filter(filtering_events,batch)]
+
+        # feats = [torch.cat([d['x'],d['c']],dim=-1) for d in filter(filtering_events,batch)] # order for the first 5 models
+        feats = [torch.cat([d['c'],d['x']],dim=-1) for d in filter(filtering_events,batch)] # saul's order
+
+        targets = [d['y'] for d in filter(filtering_events,batch)]
+
+        aux = [d['aux'] for d in filter(filtering_events,batch)]
+        
+        masks = [d['mask'] for d in filter(filtering_events,batch)]
     
 
     lens = [len(x) for x in feats]
@@ -332,23 +355,44 @@ def collate_minkowski(batch):
     - dict, a dictionary containing 'f' (features), 'c' (coordinates), and 'y' (labels) keys already arranged for a ME sparse tensor
     """
     device=batch[0]['x'].device
-    # Extract coordinates from the batch and convert to integer type
-    coords = [d['c'].int() for d in filter(filtering_events,batch)]
-
-    # Concatenate features from the batch
-    feats = torch.cat([d['x'] for d in filter(filtering_events,batch)])
-
-    # Concatenate labels from the batch
-    y = torch.cat([d['y'] for d in filter(filtering_events,batch)])
     
-    # Concatenate aux from the batch
-    try:
-        aux = torch.cat([d['aux'] for d in filter(filtering_events,batch)])
-    except TypeError: # if the aux variables are None, the cat will raise a type error
-        aux = None
+    if PREMASKING:
+        # Extract coordinates from the batch and convert to integer type
+        coords = [d['c'][d['mask']>0].int() for d in filter(filtering_events,batch)]
+
+        # Concatenate features from the batch
+        feats = torch.cat([d['x'][d['mask']>0] for d in filter(filtering_events,batch)])
+
+        # Concatenate labels from the batch
+        y = torch.cat([d['y'][d['mask']>0] for d in filter(filtering_events,batch)])
+        
+        # Concatenate aux from the batch
+        try:
+            aux = torch.cat([d['aux'][d['mask']>0] for d in filter(filtering_events,batch)])
+        except (TypeError, IndexError): # if the aux variables are None, the cat will raise a type error
+            aux = None
+        
+        # Concatenate masks from the batch
+        masks = torch.cat([d['mask'][d['mask']>0] for d in filter(filtering_events,batch)])
     
-    # Concatenate masks from the batch
-    masks = torch.cat([d['mask'] for d in filter(filtering_events,batch)])
+    else:
+        # Extract coordinates from the batch and convert to integer type
+        coords = [d['c'].int() for d in filter(filtering_events,batch)]
+
+        # Concatenate features from the batch
+        feats = torch.cat([d['x'] for d in filter(filtering_events,batch)])
+
+        # Concatenate labels from the batch
+        y = torch.cat([d['y'] for d in filter(filtering_events,batch)])
+        
+        # Concatenate aux from the batch
+        try:
+            aux = torch.cat([d['aux'] for d in filter(filtering_events,batch)])
+        except TypeError: # if the aux variables are None, the cat will raise a type error
+            aux = None
+        
+        # Concatenate masks from the batch
+        masks = torch.cat([d['mask'] for d in filter(filtering_events,batch)])
 
     # Create a dictionary to store the collated data
     ret = {'f': feats, 'c': coords, 'y': y, 'aux':aux, 'mask':masks}
@@ -494,7 +538,7 @@ def train(model:torch.nn.Module,
         loss.backward()
         
         # Update progress bar
-        train_loop.set_postfix({"loss":  f"{loss.item():.5f}"})
+        train_loop.set_postfix({"loss":  f"{loss.item():.5f}","lr":f"{optimizer.param_groups[0]['lr']:.2e}"})
           
         sum_loss += loss.item()
         comp_loss += loss_composition
@@ -556,6 +600,9 @@ def test(model:torch.nn.Module,
         loss,loss_composition=loss_func(pred,targ)
         sum_loss += loss.item()
         comp_loss += loss_composition
+        
+        # Update progress bar
+        test_loop.set_postfix({"loss":  f"{loss.item():.5f}"})
         
         true_targets+=targ.tolist()
         predictions+=pred.tolist()
@@ -713,15 +760,15 @@ def measure_performances(results_from_test_full:dict,
         ## If only some targets are considered, we restrict the inverse transformation to those
         _min=dataset.scaler_y.min_[dataset.y_indexes_with_scale]
         _scale=dataset.scaler_y.scale_[dataset.y_indexes_with_scale]
-        targets-=_min
-        targets/=_scale
-        _pred-=_min
-        _pred/=_scale
+        targets[:,np.arange(len(dataset.y_indexes_with_scale))]-=_min
+        targets[:,np.arange(len(dataset.y_indexes_with_scale))]/=_scale
+        _pred[:,np.arange(len(dataset.y_indexes_with_scale))]-=_min
+        _pred[:,np.arange(len(dataset.y_indexes_with_scale))]/=_scale
         if dataset.targets_n_classes[-1]>0:
             ## If we have some class predictions, we need to argmax
             pred=np.zeros_like(targets)
-            pred[:,:(len(targets)-1)]=_pred[:,:(len(targets)-1)]
-            pred[:,(len(targets)-1)]=np.argmax(_pred[:,(len(targets)-1):],axis=-1)
+            pred[:,:(targets.shape[-1]-1)]=_pred[:,:(targets.shape[-1]-1)]
+            pred[:,(targets.shape[-1]-1)]=np.argmax(_pred[:,(targets.shape[-1]-1):],axis=-1)
         else:
             pred=_pred
     
@@ -944,9 +991,9 @@ def main_worker(device:torch.device,
     
     
     if use_baseline:
-        model=create_baseline_model(y_out_channels=sum(dataset.targets_lengths)+sum(dataset.targets_n_classes))
+        model=create_baseline_model(y_out_channels=sum(dataset.targets_lengths)+sum(dataset.targets_n_classes), x_in_channels=len(args.inputs) if args.inputs is not None else 2)
     else:
-        model=create_transformer_model(y_out_channels=sum(dataset.targets_lengths)+sum(dataset.targets_n_classes))
+        model=create_transformer_model(y_out_channels=sum(dataset.targets_lengths)+sum(dataset.targets_n_classes), x_in_channels=len(args.inputs) if args.inputs is not None else 2)
     
     print(model.__str__().split('\n')[0][:-1]) # Print the model name
     
@@ -1035,6 +1082,8 @@ if __name__ == "__main__":
     parser.add_argument('--stop_after_epochs', type=int, default=40, help='maximum number of epochs without improvement before stopping the training (early termination)')
     parser.add_argument('-w','--weights', type=float, nargs=len(loss_fn), default=loss_fn.weights, help='weights for the loss functions')
     parser.add_argument('-t','--targets', type=int, nargs="*", default=None, help='the target indices to include')
+    parser.add_argument('-i','--inputs', type=int, nargs="*", default=None, help='the input indices to include')
+    parser.add_argument('--ms', type=str, default='distance', metavar='Masking Scheme', help='Which mask to use for the dataset (distance, primary, tag, ...)')
     args = parser.parse_args()
     
 
@@ -1083,7 +1132,9 @@ if __name__ == "__main__":
                         scaler_file=args.scaler_file,
                         use_true_tag=True,
                         scale_coordinates=(not use_baseline),
-                        targets=args.targets)
+                        targets=args.targets,
+                        inputs=args.inputs,
+                        masking_scheme=args.ms)
         
         if args.targets is not None or args.weights!=loss_fn.weights:
             print(f"Selected targets are: "+"".join([f"{dataset.targets_names[k]} ({args.weights[dataset.targets[k]]:.1e})  " for k in range(len(dataset.targets_names))]))

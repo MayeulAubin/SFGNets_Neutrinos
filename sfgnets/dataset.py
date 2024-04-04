@@ -9,6 +9,7 @@ import MinkowskiEngine as ME
 from torch.utils.data import random_split
 import numpy as np
 from abc import ABC, abstractmethod, ABCMeta
+import tqdm
 
 
 RANGES = ((-985.92, +985.92), (-257.56, +317.56), (-2888.78, -999.1))  # detector ranges (X, Y, Z)
@@ -190,6 +191,34 @@ class EventDataset(Dataset, metaclass=ABCMeta):
         
         return return_dict
     
+    def all_data(self,
+                 progress_bar:bool=True,
+                 max_index:int=None,):
+        
+        if max_index is None:
+            max_index=len(self)
+        
+        return_dict={}
+        
+        for i in tqdm.tqdm(range(max_index), disable=not progress_bar):
+            dat_dict=self[i]
+            
+            if i==0:
+                for key in dat_dict.keys():
+                    return_dict[key]=[dat_dict[key]]
+            else:
+                for key in dat_dict.keys():
+                    return_dict[key].append(dat_dict[key])
+        
+        for key in return_dict.keys():
+            return_dict[key]=np.concatenate(return_dict[key],axis=0)
+        
+        return return_dict
+    
+    @property
+    def data(self):
+        return self.all_data(progress_bar=False)
+    
     
     
 # Dataset class for SFG dataset ('new')
@@ -332,6 +361,7 @@ class PGunEvent(EventDataset):
                  scale_coordinates:bool=False,
                  targets:int|slice|list[int]=None,
                  inputs:int|slice|list[int]=None,
+                 masking_scheme:str='distance',
                  **kwargs):
         
         super().__init__(**kwargs)
@@ -341,17 +371,18 @@ class PGunEvent(EventDataset):
         self.use_true_tag=use_true_tag
         self.scale_coordinates=scale_coordinates
         self.targets=targets
-        self.inputs=list(inputs) if type(inputs) is int else inputs
+        self.inputs=[inputs] if type(inputs) is int else inputs
+        self.masking_scheme=masking_scheme
         
         if targets is None: # then all targets are used, defined by the class variables
-            self.targets_names=self.__class__.TARGETS_NAMES
-            self.targets_lengths=self.__class__.TARGETS_LENGTHS
-            self.targets_n_classes=self.__class__.TARGETS_N_CLASSES
-            self.y_indexes=None
-            self.y_indexes_with_scale=None
+            self.targets_names=self.__class__.TARGETS_NAMES # names of the targets
+            self.targets_lengths=self.__class__.TARGETS_LENGTHS # length of each target (1 if scalar, 3 if 3D vector, ...)
+            self.targets_n_classes=self.__class__.TARGETS_N_CLASSES # number of classes of the targets (non zero for classification targets)
+            self.y_indexes=None # the indexes of the targets of interest out of the full target vector
+            self.y_indexes_with_scale=None # the indexes of the targets of interest requirering a scale (not classification) out of the full target vector
         else: # else the chosen targets are used
             if targets is int:
-                targets=list(targets)
+                targets=[targets]
             self.targets_names=list(np.array(self.__class__.TARGETS_NAMES)[targets])
             self.targets_lengths=list(np.array(self.__class__.TARGETS_LENGTHS)[targets])
             self.targets_n_classes=list(np.array(self.__class__.TARGETS_N_CLASSES)[targets])
@@ -443,11 +474,46 @@ class PGunEvent(EventDataset):
     def getmask(self, data:np.lib.npyio.NpzFile):
         
         true_tag=data['tag']
+        number_of_segments=data['node_n']
+        distance_node_point=data["distance_node_point"]
+        threshold_distance=40 # threshold distance between center of cube and trajectory point of 40 mm 
 
-        return torch.BoolTensor((true_tag!=3)) # the mask is defined as all hits that are not noise, so all points with a tag different from 3
+        if self.masking_scheme=='distance':
+            ## The mask is defined as the hits which have a segment inside, or the hits whithout segments but closer than the threshold distance from their associated trajectory point
+            return torch.BoolTensor(~((number_of_segments==0)*(distance_node_point>threshold_distance))) 
+        elif self.masking_scheme=='tag':
+            return torch.BoolTensor(true_tag!=3)
+        elif self.masking_scheme=='primary':
+            return torch.BoolTensor(data["traj_parentID"]==0)
+        else:
+            raise ValueError(f"Masking scheme not recognized {self.masking_scheme}")
     
     def getaux(self, data:np.lib.npyio.NpzFile):
-        return None
+        
+        input_particle=data["input_particle"]
+        NTraj=data["NTraj"]
+        traj_parentID=data["traj_parentID"]
+        distance_node_point=data["distance_node_point"]
+        momentum=data["node_m"]
+        tag=data['tag']
+        number_of_particles=data['node_n']
+        energy_deposited=data['Edepo']
+        particle_pdg=data['pdg']
+        direction=data['node_d']
+        
+        aux=np.zeros((momentum.shape[0],14))
+        aux[:,0]=input_particle
+        aux[:,1]=NTraj
+        aux[:,2]=traj_parentID
+        aux[:,3]=distance_node_point
+        aux[:,4:7]=momentum
+        aux[:,7]=tag
+        aux[:,8]=number_of_particles
+        aux[:,9]=energy_deposited
+        aux[:,10]=particle_pdg
+        aux[:,11:14]=direction
+        
+        return torch.FloatTensor(aux)
     
     
     
