@@ -38,7 +38,7 @@ reaction_codes_long_labels_dict=dict(zip(reaction_codes,reaction_codes_long_labe
 color_list = ["#3f7dae","#ae703f",'#117238', '#4e6206', '#6e4d00','#823312','#851433']
 
 
-def _get_vals(all_results:dict[np.array]) -> tuple[np.array]:
+def _get_vals(all_results:dict[str,np.ndarray]) -> tuple[np.ndarray]:
     val_true=np.vstack(all_results['y']).flatten()
     y_pred=np.vstack(all_results['predictions'])
     val_pred=np.argmax(y_pred,axis=-1) # argmax solution
@@ -46,8 +46,8 @@ def _get_vals(all_results:dict[np.array]) -> tuple[np.array]:
     
     return val_true, val_pred, y_pred
 
-def _get_unscaled_features(all_results:dict[np.array],
-                           dataset:SparseEvent) -> np.array:
+def _get_unscaled_features(all_results:dict[str,np.ndarray],
+                           dataset:SparseEvent) -> np.ndarray:
     ## Get the features and unscale them (to obtain the meaningful features)
     scaled_features=np.vstack(all_results['f'])
     unscaled_features=dataset.scaler_minmax.inverse_transform(scaled_features)
@@ -55,7 +55,7 @@ def _get_unscaled_features(all_results:dict[np.array],
 
 
 class DataContainer:
-    def __init__(self, all_results:dict[np.array], dataset:SparseEvent):
+    def __init__(self, all_results:dict[str,np.ndarray], dataset:SparseEvent):
         self.val_true,self.val_pred,self.y_pred=_get_vals(all_results,)
         self.unscaled_features=_get_unscaled_features(all_results,dataset)
         self.all_results=all_results
@@ -163,7 +163,7 @@ def _get_perf_binning(data:DataContainer,
                  Nbins:int=100,
                  use_log_scale:bool=use_log_scale,
                  show_progress_bar:bool=True,
-                 **kwargs)-> tuple[np.array]:
+                 **kwargs)-> tuple[np.ndarray]:
     
     bins=np.logspace(np.log10(lims[0]),np.log10(lims[1]),Nbins) if use_log_scale else np.linspace(lims[0],lims[1],Nbins) #log xscale
 
@@ -278,7 +278,7 @@ def _get_perf_bars(data:DataContainer,
                  features:np.array,
                  bars:list[float],
                  show_progress_bar:bool=True,
-                 **kwargs)-> tuple[np.array]:
+                 **kwargs)-> tuple[np.ndarray]:
     
     prec=[]
     reca=[]
@@ -393,7 +393,7 @@ def _get_perf_binning_by_tag(data:DataContainer,
                             Nbins:int=100,
                             use_log_scale:bool=use_log_scale,
                             show_progress_bar:bool=True,
-                            **kwargs)-> tuple[np.array]:
+                            **kwargs)-> tuple[np.ndarray]:
     
     bins=np.logspace(np.log10(lims[0]),np.log10(lims[1]),Nbins) if use_log_scale else np.linspace(lims[0],lims[1],Nbins) #log xscale
     
@@ -414,7 +414,7 @@ def _get_perf_binning_by_tag(data:DataContainer,
 
 def _plot_perf_dist_by_tag(eff:np.array,
                             bins:np.array,
-                            vals:list[np.array],
+                            vals:list[np.ndarray],
                             features:np.array,
                             feature_name:str,
                             xlabel:str,
@@ -521,7 +521,7 @@ def _get_perf_bars_by_tag(data:DataContainer,
                  features:np.array,
                  bars:list[float],
                  show_progress_bar:bool=True,
-                 **kwargs)-> tuple[np.array]:
+                 **kwargs)-> tuple[np.ndarray]:
     
     
     eff=[[[],[]],[[],[]],[[],[]]]
@@ -554,7 +554,7 @@ def _get_perf_bars_by_tag(data:DataContainer,
 
 def _plot_perf_bars_by_tag(eff:np.array,
                             count:np.array,
-                            vals:list[np.array],
+                            vals:list[np.ndarray],
                             bar_names:list[str],
                             feature_name:str,
                             xlabel:str,

@@ -454,7 +454,7 @@ def execute_model(model:torch.nn.Module,
             feats=data['f'].F
         # if necessary extract the event id
         if do_we_consider_event_id:
-            event_id=data['f'].C[:,0]+last_event_id
+            event_id=data['f'].C[:,[0]]+last_event_id
             
     elif model_type=='transformer':
         features=data['f'].to(device)
@@ -639,7 +639,7 @@ def test_full(model:torch.nn.Module,
             do_we_consider_coord:bool=False,
             do_we_consider_feat:bool=True,
             do_we_consider_event_id:bool=True,
-            max_batches:int=None,) -> dict[list[np.array]]:
+            max_batches:int=None,) -> dict[list[np.ndarray]]:
     
     model.eval()
     
@@ -707,7 +707,7 @@ def measure_performances(results_from_test_full:dict,
                         do_we_consider_aux:bool=False,
                         do_we_consider_coord:bool=False,
                         do_we_consider_feat:bool=True,
-                        do_we_consider_event_id:bool=True,) -> dict[np.array]:
+                        do_we_consider_event_id:bool=True,) -> dict[str,np.ndarray]:
     aux=None
     coord=None
     features=None
@@ -729,8 +729,8 @@ def measure_performances(results_from_test_full:dict,
             features=dataset.scaler_x.inverse_transform(features)
         else:
             ## We are using only some parts of the input
-            _min=dataset.scaler_y.min_[dataset.inputs]
-            _scale=dataset.scaler_y.scale_[dataset.inputs]
+            _min=dataset.scaler_x.min_[dataset.inputs]
+            _scale=dataset.scaler_x.scale_[dataset.inputs]
             features-=_min
             features/=_scale
     
