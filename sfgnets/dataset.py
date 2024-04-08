@@ -430,10 +430,11 @@ class PGunEvent(EventDataset):
         particle_charge=data['p_charge']
         particle_mass=data['p_mass']
         particle_pdg=data['pdg']
+        momentum=data["node_m"]
         
         y=np.zeros((len(energy_deposited),3+3+5))
         y[:,0:3]=position-data['c'] # it will be the relative position of the 'node' compared to the cube
-        y[:,3:6]=direction
+        y[:,3:6]=momentum
         y[:,6]=number_of_particles
         y[:,7]=energy_deposited
         y[:,8]=particle_charge

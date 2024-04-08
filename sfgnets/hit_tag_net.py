@@ -26,6 +26,8 @@ from sfgnets.dataset import *
 from sfgnets.utils import minkunet
 from warmup_scheduler_pytorch import WarmUpScheduler
 
+from sfgnets.plotting import plots_ht as plots
+
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 model = minkunet.MinkUNet34B(in_channels=4, out_channels=3, D=3).to(device)

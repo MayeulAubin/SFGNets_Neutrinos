@@ -58,7 +58,7 @@ class DataContainer:
         self.number_of_particles = all_results['aux'][:,8]
         self.energy_deposited = all_results['aux'][:,9]
         self.particle_pdg = all_results['aux'][:,10]
-        self.direction = all_results['aux'][:,11]
+        self.direction = all_results['aux'][:,11:14]
         
         self.mask=(all_results["mask"][...,0]>0.)
         self.f=all_results['f']
@@ -67,12 +67,18 @@ class DataContainer:
         self.predictions=all_results['predictions']
         self.event_id=all_results['event_id'][...,0]
         
+    def __len__(self):
+        return self.aux.shape[0]
+        
         
 
 def plot_event_display(data:DataContainer|tuple[dict[str,np.ndarray],PGunEvent],
                        i:int=0,
                         show:bool=True,
                         savefig_path:str=None,
+                        pred_pdg_index:int=None,
+                        show_target_momentum:bool=True,
+                        show_pred_momentum:bool=False,
                         **kwargs):
     
     if (not data.__class__.__name__=="DataContainer"): # if the data is not a DataContainer, it must be the input of the class to construct the object
@@ -81,11 +87,16 @@ def plot_event_display(data:DataContainer|tuple[dict[str,np.ndarray],PGunEvent],
 
     indexes=data.mask*(data.event_id==i)
     track=(data.y[...,:3]+data.c[...,:3])[indexes]
+    
     fig=_plotly_event_nodes(track=track,
-                                        general_label="True track")
+                            general_label="True track",
+                            pdg=data.particle_pdg[indexes],
+                            momentum=data.momentum[indexes] if show_target_momentum else None,)
 
     fig=_plotly_event_nodes(track=(data.predictions[...,:3]+data.c)[indexes],
                                         general_label="Pred track",
+                                        pdg=data.predictions[...,pred_pdg_index][indexes] if pred_pdg_index is not None else None,
+                                        momentum=data.y[indexes][..,3:6] if show_pred_momentum else None,
                                         color="#a33711",
                                         fig=fig)
 
@@ -488,3 +499,30 @@ def plot_perf_distance(data:DataContainer,
                     show=show,
                     savefig_path=savefig_path,
                     **kwargs)
+    
+    
+def plots(data:DataContainer|tuple[dict,PGunEvent],
+          plots_chosen:list[str]=["pred_X","euclidian_distance","euclidian_distance_by_pdg","perf_charge","perf_distance"],
+        show:bool=True,
+        savefig_path:str=None,
+        model_name:str='',
+        **kwargs):
+    
+    if (not data.__class__.__name__=="DataContainer"): # if the data is not a DataContainer, it must be the input of the class to construct the object
+        data=DataContainer(*data) # construct the DataContainer out of the provided data
+
+    figs=[]
+    
+    if savefig_path is not None:
+        root=".".join(savefig_path.split('.')[:-1])
+        suffix=savefig_path.split('.')[-1]
+    
+    for func in plots_chosen:
+        print(f"Plotting {func}...")
+        figs.append(globals()["plot_"+func](data=data,
+                        show=show,
+                        model_name=model_name,
+                        savefig_path=root+func+suffix if savefig_path is not None else None,
+                        **kwargs))
+    
+    return figs

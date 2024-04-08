@@ -65,6 +65,9 @@ class DataContainer:
         self.charge=self.unscaled_features[:,0]
         
         self.aux=np.vstack(all_results['aux'])
+        
+    def __len__(self):
+        return self.aux.shape[0]
 
 
 def print_classification_report(data:DataContainer|tuple[dict,SparseEvent],**kwargs):

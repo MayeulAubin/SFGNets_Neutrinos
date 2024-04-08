@@ -14,6 +14,8 @@ import time
 import math
 from copy import deepcopy
 
+from sfgnets.plotting import plots_tf as plots
+
 x_in_channels=2
 y_out_channels=np.sum(PGunEvent.TARGETS_LENGTHS)
 
@@ -1071,6 +1073,7 @@ if __name__ == "__main__":
     parser.add_argument('dataset_folder',metavar='Dataset_Folder', type=str, help="Folder in which are stored the event_#.npz files for training")
     parser.add_argument('scaler_file',metavar='Scaler_File', type=str, help="File storing the dataset features scalers")
     parser.add_argument('save_path',metavar='Save_Path', type=str, help="Path to save results and models")
+    parser.add_argument('-T', '--test', action='store_true', help='runs test after training (measure performances, plots, ...)')
     parser.add_argument('-B', '--baseline', action='store_true', help='use the baseline model (MinkUNet), otherwise use the transformer')
     parser.add_argument('-m', '--multi_GPU', action='store_true', help='runs the script on multi GPU')
     parser.add_argument('-b', '--benchmarking', action='store_true', help='prints the duration of the different parts of the code')
@@ -1161,4 +1164,56 @@ if __name__ == "__main__":
         # torch.save(model.state_dict(), f"/scratch4/maubin/models/hittag_model_{j}.torch")
         torch.save(training_dict,f"{args.save_path}results/trackfit_training_dict_{'baseline_' if use_baseline else ''}{j}.torch")
         
+        if args.test:
+            print("Testing the model...")
+            testdataset_folder=args.dataset_folder[:-6]+"test/" ## we are assuming that the dataset_folder is of type "*_train/" whereas the testdataset folder will be "*_test/"
+            
+            testdataset=PGunEvent(root=testdataset_folder,
+                        shuffle=True,
+                        multi_pass=multi_pass,
+                        files_suffix='npz',
+                        scaler_file=args.scaler_file,
+                        use_true_tag=True,
+                        scale_coordinates=(not use_baseline),
+                        targets=args.targets,
+                        inputs=args.inputs,
+                        masking_scheme=args.ms)
+            
+            full_loader=full_dataset(dataset,
+                                    collate=collate_minkowski if use_baseline else collate_transformer,
+                                    batch_size=args.batch_size,)
+            
+            all_results=test_full(loader=full_loader,
+                                                    model=model,
+                                                    model_type="minkowski" if use_baseline else "transformer",
+                                                    progress_bar=True,
+                                                    device=device,
+                                                    do_we_consider_aux=True,
+                                                    do_we_consider_coord=True,
+                                                    do_we_consider_feat=True,
+                                                    # max_batches=10,
+                                                    )
+
+            if args.targets is not None:
+                    perf_fn=perf_fn[args.targets]
+                    perf_fn.rebuild_partial_losses()
+
+            all_results=measure_performances(all_results,
+                                            dataset,
+                                            perf_fn,
+                                            device, 
+                                            model_type="minkowski" if use_baseline else "transformer",
+                                            do_we_consider_aux=True,
+                                            do_we_consider_coord=True,
+                                            do_we_consider_feat=True,)
+
+            with open(f'{args.save_path}results/track_fitting_model_{"baseline_" if use_baseline else ""}{j}_pred.pkl', 'wb') as file:
+                    pk.dump(all_results,file)
+                    
+            plots.plots((all_results,testdataset),
+                        plots_chosen=["pred_X","euclidian_distance","euclidian_distance_by_pdg","perf_charge","perf_distance"],
+                        save_path=f'{args.save_path}plots/track_fitting_model_{"baseline_" if use_baseline else ""}{j}.png',
+                        model_name=str(j),
+                        )
+
     main()

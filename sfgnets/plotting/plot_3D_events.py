@@ -4,6 +4,9 @@ import plotly.graph_objects as go
 from matplotlib.colors import ListedColormap
 import numpy as np
 import matplotlib.pyplot as plt
+import particle
+
+pdg_names_dict=dict(zip([0,-11,11,22,-13,13,2212,211,-211],['pdg0','e+','e-','gamma','mu+','mu-','p','pi+','pi-']))
 
 def rgb_to_hex(rgb):
     """
@@ -18,12 +21,12 @@ def rgb_to_hex(rgb):
     return "#{:02X}{:02X}{:02X}".format(int(rgb[0] * 255), int(rgb[1] * 255), int(rgb[2] * 255))
 
 
-def plotly_event_general(pos3d:np.array=None,
-                    image:np.array=None,
-                    track:np.array=None, 
+def plotly_event_general(pos3d:np.ndarray=None,
+                    image:np.ndarray=None,
+                    track:np.ndarray=None, 
                     max_energy:float=200,
                     cube_size:float = 10,
-                    energies:np.array=None,
+                    energies:np.ndarray=None,
                     xyz_ranges:list[tuple[float,float]]=np.array([[-985.92, +985.92],[-257.56, +317.56],[-2888.78, -999.1]]),
                     fig=None,
                     cmap:str='Wistia',
@@ -31,10 +34,12 @@ def plotly_event_general(pos3d:np.array=None,
                     title:str="Particles interacting in SFG detector",
                     label:str='Hit',
                     track_label:str|list[str]='Track',
-                    pdg:np.array=None,
+                    pdg:np.ndarray=None,
+                    track_pdg:np.ndarray=None,
                     vertex:tuple[list[float],list[float],list[float]]=None,
                     center:bool=False,
                     focus:bool=False,
+                    momentum:np.ndarray=None,
                     **kwargs
                     ):
     """
@@ -105,7 +110,18 @@ def plotly_event_general(pos3d:np.array=None,
                     # old_index=np.unravel_index(j, pos3d.shape[:-1])
                     particle_pdg=pdg[j]
                     if j:
-                        if len(particle_pdg)>0:
+                        # if the pdg is already a number, then it should be converted to its string representation
+                        if type(particle_pdg) is int or type(particle_pdg) is float: 
+                            particle_pdg=int(particle_pdg)
+                            # we first try to use the dictionary
+                            try: 
+                                name=f"{pdg_names_dict[particle_pdg]}"
+                            # otherwise we extend the dictionary
+                            except KeyError:
+                                pdg_names_dict[particle_pdg]=particle.Particle.from_pdgid(particle_pdg).name
+                                name=f"{pdg_names_dict[particle_pdg]}"
+                        # if the pdg is a list/array (as when using hit segments pdg), use it as it is
+                        elif len(particle_pdg)>0:
                             name=f"{particle_pdg}"
             
             cube = go.Mesh3d(
@@ -115,16 +131,18 @@ def plotly_event_general(pos3d:np.array=None,
                 i=[7, 0, 0, 0, 4, 4, 6, 6, 4, 0, 3, 2],
                 j=[3, 4, 1, 2, 5, 6, 5, 2, 0, 1, 6, 3],
                 k=[0, 7, 2, 3, 6, 7, 1, 1, 5, 5, 7, 6],
-                colorbar=dict(
-                    thickness=20,
-                    title='Voxel Values',
-                ),
                 color=cl,
                 flatshading=True,
                 opacity=op,
                 legendgroup=label,
                 name=name,
                 showlegend=(j==0),
+                colorbar={"title":"Energy deposited",
+                          "tickmode":"array",
+                          "tickvals":np.linspace(0, N, num=10),
+                          },
+                colorscale=[vc for vc in zip(values/N,colors)],
+                showscale=(j==0) and (energies is not None),
             )
             fig.add_trace(cube)
     
@@ -139,25 +157,117 @@ def plotly_event_general(pos3d:np.array=None,
     # Adds the tracks:
     if track is not None:
         if len(track.shape)==2:
+            
             track_=track[None,...]
+            
+            if track_pdg is not None:
+                track_pdg_=track_pdg[None,...]
+            else:
+                track_pdg_=None
+                
+            if momentum is not None:
+                momentum_=momentum[None,...]
+                
             if type(track_label) is not list:
                 track_label=[track_label]
         else:
             track_=track
+            track_pdg_=track_pdg
             
         for k,t in enumerate(track_):
-            trk=go.Scatter3d(x=t[:,0],y=t[:,1],z=t[:,2],
-                             mode="markers", # can be changed to "lines+markers" to include lines connecting points
-                             marker={"size":4.,"color":track_color},
-                             name=track_label[k],
-                             )
-            fig.add_trace(trk)
+            if track_pdg_ is None:
+                ## If no momenta is provided, plot the tracks as points
+                if momentum is None:
+                    trk=go.Scatter3d(x=t[:,0],y=t[:,1],z=t[:,2],
+                                    mode="markers", # can be changed to "lines+markers" to include lines connecting points
+                                    marker={"size":4.,"color":track_color},
+                                    name=track_label[k],
+                                    )
+                ## If the momentum is provided, plot the tracks+momentum as cones
+                else:
+                    trk=go.Cone(x=t[:,0],y=t[:,1],z=t[:,2],
+                                u=momentum_[k,0],v=momentum_[k,1],w=momentum_[k,2],
+                                    # sizemode="absolute",
+                                    sizeref=10./np.linalg.norm(t[1:]-t[:-1],axis=1).min(),
+                                    name=track_label[k],
+                                    colorbar={"title":"Momentum",
+                                              "tickmode":"array",
+                                              "tickvals":[0,500,1000,1500,2000,2500,3000, 3500],
+                                              "ticktext":["0","500 MeV","1 GeV", "1500 MeV", "2 GeV", "2500 MeV", "3 GeV", "3500 MeV"],
+                                              "ticks":"outside"},
+                                    cmin=0.,
+                                    cmax=3500.,
+                                    colorscale=[(0.0,track_color),(1.0,"#ffffff")],
+                                    showscale=True,
+                                    showlegend=True,
+                                    
+                                    )
+                fig.add_trace(trk)
+            else:
+                # if provided pdgs, we filter by pdg and use each of them separately to have the names of the points set accordingly
+                pdgs_of_interest=np.unique(track_pdg_)
+                for l,pdg_ in enumerate(pdgs_of_interest):
+                    pdg_=int(pdg_)
+                    # we first try to use the dictionary
+                    try: 
+                        name=f"{pdg_names_dict[pdg_]}"
+                    # otherwise we extend the dictionary
+                    except KeyError:
+                        pdg_names_dict[pdg_]=particle.Particle.from_pdgid(pdg_).name
+                        name=f"{pdg_names_dict[pdg_]}"
+                        
+                    if momentum is None:
+                        trk=go.Scatter3d(x=t[track_pdg_[k]==pdg_,0],y=t[track_pdg_[k]==pdg_,1],z=t[track_pdg_[k]==pdg_,2],
+                                        mode="markers", # can be changed to "lines+markers" to include lines connecting points
+                                        marker={"size":4.,"color":track_color},
+                                        # legendgroup=track_label[k],
+                                        # legendgrouptitle_text=track_label[k],
+                                        # showlegend=(l==0),
+                                        name=name,
+                                        legend="legend2",
+                                        )
+                    else:
+                        trk=go.Cone(x=t[track_pdg_[k]==pdg_,0],y=t[track_pdg_[k]==pdg_,1],z=t[track_pdg_[k]==pdg_,2],
+                                    u=momentum_[k,track_pdg_[k]==pdg_,0],v=momentum_[k,track_pdg_[k]==pdg_,1],w=momentum_[k,track_pdg_[k]==pdg_,2],
+                                        # sizemode="absolute",
+                                        sizeref=10./np.linalg.norm(t[track_pdg_[k]==pdg_][1:]-t[track_pdg_[k]==pdg_][:-1],axis=1).min(),
+                                        # legendgroup=track_label[k],
+                                        # legendgrouptitle_text=track_label[k],
+                                        colorbar={"title":"Momentum",
+                                              "tickmode":"array",
+                                              "tickvals":[0,500,1000,1500,2000,2500,3000, 3500],
+                                              "ticktext":["0","500 MeV","1 GeV", "1500 MeV", "2 GeV", "2500 MeV", "3 GeV", "3500 MeV"],
+                                              "ticks":"outside"},
+                                        cmin=0.,
+                                        cmax=3500.,
+                                        colorscale=[(0.0,track_color),(1.0,"#ffffff")],
+                                        showscale=(l==0),
+                                        showlegend=True,
+                                        name=name,
+                                        legend="legend2",
+                                        )
+                    fig.add_trace(trk)
+                    
+                fig.update_layout(legend2={"title":track_label[k]})
+                    
+                # trk=go.Scatter3d(x=t[np.isin(track_pdg_[k],pdgs_of_interest,invert=True),0],y=t[np.isin(track_pdg_[k],pdgs_of_interest,invert=True),1],z=t[np.isin(track_pdg_[k],pdgs_of_interest,invert=True),2],
+                #                     mode="markers", # can be changed to "lines+markers" to include lines connecting points
+                #                     marker={"size":4.,"color":track_color},
+                #                     legendgroup=track_label[k],
+                #                     showlegend=False,
+                #                     name="other",
+                #                     )
+                # fig.add_trace(trk)
+                
+
+    
+    # Adds the vertex point
 
     # Set the margin to remove all margins
     fig.update_layout(margin=dict(l=0, r=0, t=0, b=0))
 
     # Set the image size based on the aspect ratio
-    width, height = 800, 800  # Adjust these values as needed
+    width, height = 1500, 800  # Adjust these values as needed
     fig.update_layout(width=width, height=height,title=title)
 
     fig.update_layout(
@@ -206,11 +316,11 @@ def plotly_event_general(pos3d:np.array=None,
     return fig
 
 
-def plotly_event_hittag(pos3d:np.array=None,
-                        image:np.array=None,
-                        energies:np.array=None,
-                        hittags:np.array=None,
-                        pdg:np.array=None,
+def plotly_event_hittag(pos3d:np.ndarray=None,
+                        image:np.ndarray=None,
+                        energies:np.ndarray=None,
+                        hittags:np.ndarray=None,
+                        pdg:np.ndarray=None,
                         cmaps:list[str]=["spring","Wistia","cool"],
                         general_label:str="",
                         fig=None,
@@ -239,12 +349,12 @@ def plotly_event_hittag(pos3d:np.array=None,
     return fig
 
 
-def plotly_event_nodes(track:np.array,
+def plotly_event_nodes(track:np.ndarray,
                         general_label:str="Track",
                         color:str="#11a337",
                         fig=None,
                         vertex:tuple[list[float],list[float],list[float]]=None,
-                        # pdg:np.array=None,
+                        pdg:np.ndarray=None,
                         **kwargs
                         ):
     """
@@ -256,6 +366,7 @@ def plotly_event_nodes(track:np.array,
                              track_color=color,
                              vertex=vertex,
                              fig=fig,
+                             track_pdg=pdg,
                              **kwargs)
     
     return fig
