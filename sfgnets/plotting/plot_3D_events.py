@@ -40,6 +40,7 @@ def plotly_event_general(pos3d:np.ndarray=None,
                     center:bool=False,
                     focus:bool=False,
                     momentum:np.ndarray=None,
+                    cone_scale:float=1.,
                     **kwargs
                     ):
     """
@@ -118,8 +119,11 @@ def plotly_event_general(pos3d:np.ndarray=None,
                                 name=f"{pdg_names_dict[particle_pdg]}"
                             # otherwise we extend the dictionary
                             except KeyError:
-                                pdg_names_dict[particle_pdg]=particle.Particle.from_pdgid(particle_pdg).name
-                                name=f"{pdg_names_dict[particle_pdg]}"
+                                try:
+                                    pdg_names_dict[particle_pdg]=particle.Particle.from_pdgid(particle_pdg).name
+                                    name=f"{pdg_names_dict[particle_pdg]}"
+                                except particle.ParticleNotFound:
+                                    name="not found"
                         # if the pdg is a list/array (as when using hit segments pdg), use it as it is
                         elif len(particle_pdg)>0:
                             name=f"{particle_pdg}"
@@ -173,7 +177,8 @@ def plotly_event_general(pos3d:np.ndarray=None,
         else:
             track_=track
             track_pdg_=track_pdg
-            
+            momentum_=momentum
+        
         for k,t in enumerate(track_):
             if track_pdg_ is None:
                 ## If no momenta is provided, plot the tracks as points
@@ -185,10 +190,13 @@ def plotly_event_general(pos3d:np.ndarray=None,
                                     )
                 ## If the momentum is provided, plot the tracks+momentum as cones
                 else:
+                    cone_rescaling=(np.linalg.norm(t[1:]-t[:-1],axis=1)*2/(np.linalg.norm(momentum_[k][1:],axis=-1)+np.linalg.norm(momentum_[k][:-1],axis=-1))).min()*100 if len(t)>1 else 1.
+                    # cone_rescaling*=np.max(np.linalg.norm(momentum_[k],axis=-1))/1000 if np.max(np.linalg.norm(momentum_[k],axis=-1))<200 else 1.
+                    cone_rescaling*=1.+1e-6 -np.exp(-np.mean(np.linalg.norm(momentum_[k],axis=-1))/100)
                     trk=go.Cone(x=t[:,0],y=t[:,1],z=t[:,2],
-                                u=momentum_[k,0],v=momentum_[k,1],w=momentum_[k,2],
+                                u=momentum_[k,:,0],v=momentum_[k,:,1],w=momentum_[k,:,2],
                                     # sizemode="absolute",
-                                    sizeref=10./np.linalg.norm(t[1:]-t[:-1],axis=1).min(),
+                                    sizeref=cone_scale/cone_rescaling,
                                     name=track_label[k],
                                     colorbar={"title":"Momentum",
                                               "tickmode":"array",
@@ -213,8 +221,11 @@ def plotly_event_general(pos3d:np.ndarray=None,
                         name=f"{pdg_names_dict[pdg_]}"
                     # otherwise we extend the dictionary
                     except KeyError:
-                        pdg_names_dict[pdg_]=particle.Particle.from_pdgid(pdg_).name
-                        name=f"{pdg_names_dict[pdg_]}"
+                        try:
+                            pdg_names_dict[pdg_]=particle.Particle.from_pdgid(pdg_).name
+                            name=f"{pdg_names_dict[pdg_]}"
+                        except particle.ParticleNotFound:
+                            name="not found"
                         
                     if momentum is None:
                         trk=go.Scatter3d(x=t[track_pdg_[k]==pdg_,0],y=t[track_pdg_[k]==pdg_,1],z=t[track_pdg_[k]==pdg_,2],
@@ -227,10 +238,13 @@ def plotly_event_general(pos3d:np.ndarray=None,
                                         legend="legend2",
                                         )
                     else:
+                        cone_rescaling=(np.linalg.norm(t[track_pdg_[k]==pdg_][1:]-t[track_pdg_[k]==pdg_][:-1],axis=1)*2/(np.linalg.norm(momentum_[k,track_pdg_[k]==pdg_][1:],axis=-1)+np.linalg.norm(momentum_[k,track_pdg_[k]==pdg_][:-1],axis=-1))).min()*100 if len(t[track_pdg_[k]==pdg_])>1 else 1.
+                        # cone_rescaling*=np.max(np.linalg.norm(momentum_[k,track_pdg_[k]==pdg_],axis=-1))/1000 if np.max(np.linalg.norm(momentum_[k,track_pdg_[k]==pdg_],axis=-1))<200 else 1.
+                        cone_rescaling*=1.+1e-6 -np.exp(-np.mean(np.linalg.norm(momentum_[k,track_pdg_[k]==pdg_],axis=-1))/100)
                         trk=go.Cone(x=t[track_pdg_[k]==pdg_,0],y=t[track_pdg_[k]==pdg_,1],z=t[track_pdg_[k]==pdg_,2],
                                     u=momentum_[k,track_pdg_[k]==pdg_,0],v=momentum_[k,track_pdg_[k]==pdg_,1],w=momentum_[k,track_pdg_[k]==pdg_,2],
                                         # sizemode="absolute",
-                                        sizeref=10./np.linalg.norm(t[track_pdg_[k]==pdg_][1:]-t[track_pdg_[k]==pdg_][:-1],axis=1).min(),
+                                        sizeref=cone_scale/cone_rescaling,
                                         # legendgroup=track_label[k],
                                         # legendgrouptitle_text=track_label[k],
                                         colorbar={"title":"Momentum",

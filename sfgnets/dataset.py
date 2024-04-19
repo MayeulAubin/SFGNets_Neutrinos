@@ -12,7 +12,9 @@ from abc import ABC, abstractmethod, ABCMeta
 import tqdm
 
 
-RANGES = ((-985.92, +985.92), (-257.56, +317.56), (-2888.78, -999.1))  # detector ranges (X, Y, Z)
+RANGES = np.array([[ -985.92 ,   985.92 ],
+                   [ -257.56 ,   317.56 ],
+                   [-2888.776,  -999.096]])  # detector ranges (X, Y, Z)
 CUBE_SIZE = 10.27 / 2  # half of cube size in mm
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -38,7 +40,7 @@ def natural_sort(l:list):
 
 
 # convert raw coordinates to cubes
-def transform_cube(X:torch.Tensor):
+def transform_cube(X:np.ndarray):
     """
     Convert raw coordinates to cubes.
     
@@ -46,21 +48,21 @@ def transform_cube(X:torch.Tensor):
     - X: numpy array
     - dim: int, dimension (2 or 3)
     """
-    for i in range(3):
-        X[..., i] -= RANGES[i][0]
-        X[..., i] /= (CUBE_SIZE * 2)
+    X-=RANGES[None,:,0]
+    X/=(CUBE_SIZE * 2)
+    return X.astype(int)
 
-    X[:] = X[:].astype(int)
-
-def transform_inverse_cube(X):
+def transform_inverse_cube(X:np.ndarray):
     """
     Convert cubes to raw coordinates.
     
     Parameters:
     - X: numpy array
     """
-    for i in range(3):
-        X[..., i] = X[..., i] * (CUBE_SIZE * 2) + RANGES[i][0]
+    X=X.astype(float)
+    X+=0.5
+    X = X * (CUBE_SIZE * 2) + RANGES[None,:,0]
+    return X
         
 
 def collate_default(batch):
@@ -307,12 +309,12 @@ class SparseEvent(EventDataset):
         
         # Convert cube raw positions to cubes
         if self.scale_coordinates:
-            transform_cube(c) # beware this changes the coordinate array, might change it in the data dict too, beware to not apply this before getx
+            c=transform_cube(c) 
         
         # center the event if necessary
         if self.center_event:
             verPos = data['recon_verPos'] if self.recon_ver else data['verPos']
-            transform_cube(verPos) # beware this changes the vertex position array, might change it in the data dict too, beware to not apply this before getx
+            verPos=transform_cube(verPos) # beware this changes the vertex position array, might change it in the data dict too, beware to not apply this before getx
             c-=verPos
         
         return torch.FloatTensor(c)
@@ -350,9 +352,9 @@ particles_classes={0:0, # no particle, or low energy neutrons
 
 class PGunEvent(EventDataset):
     
-    TARGETS_NAMES=["position", "direction", "number_of_particles", "energy_deposited", "particle_charge", "particle_mass", "particle_pdg"]
-    TARGETS_LENGTHS=[3,3,1,1,1,1,1]
-    TARGETS_N_CLASSES=[0,0,0,0,0,0,len(particles_classes.keys())-1]
+    TARGETS_NAMES=["position", "momentum"]
+    TARGETS_LENGTHS=[3,3]
+    TARGETS_N_CLASSES=[0,0]
     INPUT_NAMES=["charge","hittag"]
     
     def __init__(self,
@@ -374,6 +376,24 @@ class PGunEvent(EventDataset):
         self.inputs=[inputs] if type(inputs) is int else inputs
         self.masking_scheme=masking_scheme
         
+        self.def_local_targets_variables(targets)
+        
+        if scaler_file is not None:
+            self.use_scaler=True
+            with open(scaler_file, "rb") as fd:
+                self.scaler_x, self.scaler_y, self.scaler_c = pk.load(fd)
+        else:
+            self.use_scaler=False
+            
+            
+            
+            
+    def def_local_targets_variables(self, targets:int|slice|list[int]|None):
+        """
+        This function was particularly helpful when using a lot of different targets, some of regression type other of classifications.
+        It builds the local targets_names, targets_lengths, targets_n_classes (if classification task), and the y_indexes
+        """
+        
         if targets is None: # then all targets are used, defined by the class variables
             self.targets_names=self.__class__.TARGETS_NAMES # names of the targets
             self.targets_lengths=self.__class__.TARGETS_LENGTHS # length of each target (1 if scalar, 3 if 3D vector, ...)
@@ -392,13 +412,7 @@ class PGunEvent(EventDataset):
                 self.y_indexes+=list(range(indices_cumsum[i],indices_cumsum[i+1]))
                 if self.__class__.TARGETS_N_CLASSES[i]==0:
                     self.y_indexes_with_scale+=list(range(indices_cumsum[i],indices_cumsum[i+1]))
-        
-        if scaler_file is not None:
-            self.use_scaler=True
-            with open(scaler_file, "rb") as fd:
-                self.scaler_x, self.scaler_y, self.scaler_c = pk.load(fd)
-        else:
-            self.use_scaler=False
+                    
     
     def getx(self, data:np.lib.npyio.NpzFile):
         
@@ -425,29 +439,12 @@ class PGunEvent(EventDataset):
         
         position=data['node_c']
         direction=data['node_d']
-        number_of_particles=data['node_n']
-        energy_deposited=data['Edepo']
-        particle_charge=data['p_charge']
-        particle_mass=data['p_mass']
-        particle_pdg=data['pdg']
         momentum=data["node_m"]
         
-        y=np.zeros((len(energy_deposited),3+3+5))
+        y=np.zeros((len(position),3+3))
         y[:,0:3]=position-data['c'] # it will be the relative position of the 'node' compared to the cube
         y[:,3:6]=momentum
-        y[:,6]=number_of_particles
-        y[:,7]=energy_deposited
-        y[:,8]=particle_charge
-        y[:,9]=particle_mass
-        try:
-            y[:,10]=np.vectorize(particles_classes.get)(particle_pdg)
-            y[np.isnan(y[:,10]),10]=particles_classes[999] # most of the time the non-attributed particles get the 'nan' value, so we replace them with the pdg code 999
-        except (KeyError,TypeError): # sometimes, if at least a  particle pdg code has no attributed class, it will raise an exception instead of placing 'nan', we need to iterate manually through the array
-            for k in range(len(particle_pdg)):
-                try:
-                    y[k,10]=particles_classes[particle_pdg[k]] # for regular particles we use the usual classes
-                except (KeyError,TypeError): # we use the last class for non-attributed particles
-                    y[k,10]=particles_classes[999] # they are identified with the pdg code 999
+        # y[:,3:6]=direction
         
         if self.use_scaler:    
             y[:,:10]=self.scaler_y.transform(y[:,:10]) # all but particle class (no scaling for classes)
@@ -468,7 +465,7 @@ class PGunEvent(EventDataset):
                 c=self.scaler_c.transform(c) # scale coordinates for the Transformer
         else:
             # Convert cube raw positions to cubes (for Minkowksi convolution)
-            transform_cube(c)
+            c=transform_cube(c)
         
         return torch.FloatTensor(c)
     
@@ -483,9 +480,15 @@ class PGunEvent(EventDataset):
             ## The mask is defined as the hits which have a segment inside, or the hits whithout segments but closer than the threshold distance from their associated trajectory point
             return torch.BoolTensor(~((number_of_segments==0)*(distance_node_point>threshold_distance))) 
         elif self.masking_scheme=='tag':
+            ## Remove noise hits
             return torch.BoolTensor(true_tag!=3)
         elif self.masking_scheme=='primary':
+            ## Keeps only the primary trakectory
             return torch.BoolTensor(data["traj_parentID"]==0)
+        elif self.masking_scheme=='segmented':
+            ## Select randomly a trajectory and mask others, a weighting by the number of hits is embedded in the selection
+            selected_traj_ID=np.random.choice(data['traj_ID'])
+            return torch.BoolTensor(data["traj_ID"]==selected_traj_ID)
         else:
             raise ValueError(f"Masking scheme not recognized {self.masking_scheme}")
     
@@ -494,15 +497,20 @@ class PGunEvent(EventDataset):
         input_particle=data["input_particle"]
         NTraj=data["NTraj"]
         traj_parentID=data["traj_parentID"]
-        distance_node_point=data["distance_node_point"]
+        # distance_node_point=data["distance_node_point"]
+        distance_node_point=np.linalg.norm(data["node_c"][:,0:3]-data["c"],axis=-1)
         momentum=data["node_m"]
         tag=data['tag']
         number_of_particles=data['node_n']
         energy_deposited=data['Edepo']
         particle_pdg=data['pdg']
         direction=data['node_d']
+        traj_length=data['traj_length']
+        event_entry=data['event_entry']
+        recon_c=data['recon_c']
+        recon_d=data['recon_d']
         
-        aux=np.zeros((momentum.shape[0],14))
+        aux=np.zeros((tag.shape[0],23))
         aux[:,0]=input_particle
         aux[:,1]=NTraj
         aux[:,2]=traj_parentID
@@ -513,6 +521,10 @@ class PGunEvent(EventDataset):
         aux[:,9]=energy_deposited
         aux[:,10]=particle_pdg
         aux[:,11:14]=direction
+        aux[:,15]=traj_length
+        aux[:,16]=event_entry
+        aux[:,17:20]=recon_c
+        aux[:,20:23]=recon_d
         
         return torch.FloatTensor(aux)
     

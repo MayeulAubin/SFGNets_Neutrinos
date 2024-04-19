@@ -517,7 +517,7 @@ class SparseEvent_old(Dataset):
         verPos = data['verPos']
 
         # Convert cube raw positions to cubes
-        transform_cube(c_new)
+        c_new=transform_cube(c_new)
 
         # Remove time ('HitTime') and distance to vertex ('HitDistance2Vertex')
         x = x[:, 1:-1]
@@ -800,6 +800,7 @@ if __name__ == "__main__":
     parser.add_argument('scaler_file',metavar='Scaler_File', type=str, help="File storing the dataset features scalers")
     parser.add_argument('save_path',metavar='Save_Path', type=str, help="Path to save results and models")
     parser.add_argument('-T', '--test', action='store_true', help='runs test after training (classification report,...)')
+    parser.add_argument('--test_only', action='store_true', help='runs only the test (classification report,...)')
     parser.add_argument('-m', '--multi_GPU', action='store_true', help='runs the script on multi GPU')
     parser.add_argument('-b', '--benchmarking', action='store_true', help='prints the duration of the different parts of the code')
     parser.add_argument('-s', '--sub_tqdm', action='store_true', help='displays the progress bars of the train and test loops for each epoch')
@@ -839,44 +840,46 @@ if __name__ == "__main__":
         global multi_GPU, benchmarking
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         
-        if multi_GPU:
-            print(f"Training on Multi GPU...")
-        else:
-            print(f"Training on Single GPU {device}...")
-        if benchmarking:
-            print("Benchmarking...")
-        if multi_pass!=1:
-            print(f"Multi pass {multi_pass}...")
+        if (not args.test_only):
+        
+            if multi_GPU:
+                print(f"Training on Multi GPU...")
+            else:
+                print(f"Training on Single GPU {device}...")
+            if benchmarking:
+                print("Benchmarking...")
+            if multi_pass!=1:
+                print(f"Multi pass {multi_pass}...")
 
-        # generate dataset
-        dataset=SparseEvent(args.dataset_folder,
-                            scaler_file=args.scaler_file,
-                            multi_pass=multi_pass,
-                            filtering_func=select_hits_near_vertex(cut=args.cut,dist_type="cube") if args.filter else None,
-                            center_event=args.filter,
-                            retagging_func=retag_cut(args.rcut) if args.retag else None) 
+            # generate dataset
+            dataset=SparseEvent(args.dataset_folder,
+                                scaler_file=args.scaler_file,
+                                multi_pass=multi_pass,
+                                filtering_func=select_hits_near_vertex(cut=args.cut,dist_type="cube") if args.filter else None,
+                                center_event=args.filter,
+                                retagging_func=retag_cut(args.rcut) if args.retag else None) 
 
-        t0=time.perf_counter()
+            t0=time.perf_counter()
 
-        if multi_GPU:
-            world_size = torch.cuda.device_count()
-            model, training_dict=torch.multiprocessing.spawn(main_worker, args=(
-                                                                    dataset,
-                                                                    args,
-                                                                    world_size,
-                                                                    multi_GPU), nprocs=world_size)
-            
-        else:
-            model, training_dict=main_worker(device,
-                                dataset,
-                                args,)
-            
-        t0=t0-time.perf_counter()
+            if multi_GPU:
+                world_size = torch.cuda.device_count()
+                model, training_dict=torch.multiprocessing.spawn(main_worker, args=(
+                                                                        dataset,
+                                                                        args,
+                                                                        world_size,
+                                                                        multi_GPU), nprocs=world_size)
+                
+            else:
+                model, training_dict=main_worker(device,
+                                    dataset,
+                                    args,)
+                
+            t0=t0-time.perf_counter()
 
-        torch.save(training_dict,f"{args.save_path}results/training_dict_{j}.torch")    
+            torch.save(training_dict,f"{args.save_path}results/training_dict_{j}.torch")    
 
         ## Runs the tests
-        if args.test:
+        if args.test or args.test_only:
             testdataset_folder=args.dataset_folder[:-6]+"test/" ## we are assuming that the dataset_folder is of type "*_train/" whereas the testdataset folder will be "*_test/"
             testdataset=SparseEvent(testdataset_folder,
                             scaler_file=args.scaler_file,
@@ -884,6 +887,9 @@ if __name__ == "__main__":
                             filtering_func=select_hits_near_vertex(cut=args.cut,dist_type="cube") if args.filter else None,
                             center_event=args.filter,
                             retagging_func=retag_cut(args.rcut) if args.retag else None) 
+            
+            model = minkunet.MinkUNet34B(in_channels=4, out_channels=3, D=3).to(device)
+            model.load_state_dict(torch.load(f"{args.save_path}models/hittag_model_{j}.torch"))
             
             _test_model(device=device,
                         dataset=testdataset,

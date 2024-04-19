@@ -6,9 +6,8 @@ from sfgnets.utils import minkunet
 from torch import Tensor
 import torch.nn as nn
 from torch.nn import TransformerEncoder, TransformerEncoderLayer
-from sklearn.preprocessing import MinMaxScaler, StandardScaler
+from sklearn.preprocessing import MinMaxScaler
 import tqdm
-from sklearn.metrics import precision_recall_fscore_support
 from warmup_scheduler_pytorch import WarmUpScheduler
 import time
 import math
@@ -21,6 +20,8 @@ y_out_channels=np.sum(PGunEvent.TARGETS_LENGTHS)
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+
+#################### TRANSFORMER MODEL #####################
 
 class FittingTransformer(nn.Module):
     def __init__(self,
@@ -65,6 +66,37 @@ class FittingTransformer(nn.Module):
         output = self.decoder(memory)
         # output[:, :, :3] += src[:, :, :3]  # learn residuals for x,y,z position
         return output
+    
+    
+
+
+def create_baseline_model(x_in_channels:int=x_in_channels,
+                          y_out_channels:int=y_out_channels,
+                          device:torch.device=device):
+
+    return minkunet.MinkUNet34B(in_channels=x_in_channels, out_channels=y_out_channels, D=3).to(device)
+
+
+def create_transformer_model(x_in_channels:int=x_in_channels,
+                            y_out_channels:int=y_out_channels,
+                            device:torch.device=device,
+                            D_MODEL:int = 64,
+                            N_HEAD:int = 8,
+                            DIM_FEEDFORWARD:int = 128,
+                            NUM_ENCODER_LAYERS:int = 5):
+
+    return FittingTransformer(num_encoder_layers=NUM_ENCODER_LAYERS,
+                                 d_model=D_MODEL,
+                                 n_head=N_HEAD,
+                                 input_size=3+x_in_channels,
+                                 output_size=y_out_channels,
+                                 dim_feedforward=DIM_FEEDFORWARD).to(device)
+    
+
+
+
+#################### LOSSES #####################    
+
 
 class SumLoss(nn.Module):
     """
@@ -148,6 +180,102 @@ class PartialClassificationLoss(nn.Module):
     
     def forward(self, pred:Tensor, target:Tensor) -> Tensor:
         return self.loss_func(pred[...,self.indexes_pred],target[...,self.index_target].to(torch.int64))
+    
+
+class MomentumLoss(torch.nn.modules.loss._Loss):
+    
+    def __init__(self, angle_resolution:float = np.pi/100 , norm_resolution:float= np.sqrt(3)/2*1/10, reduction: str = 'mean', **kwargs):
+        super().__init__(reduction=reduction, **kwargs)
+        self.angle_resolution=angle_resolution
+        self.norm_resolution=norm_resolution
+    
+    def forward(self, pred:Tensor, target:Tensor) -> Tensor:
+        pred_momentum=pred-0.5
+        target_momentum=target-0.5
+        
+        pred_norm=torch.linalg.norm(pred_momentum,dim=-1)
+        target_norm=torch.linalg.norm(target_momentum,dim=-1)
+        
+        ## For the direction loss, we use the angle between the two vectors. First we compute the dot product of the two normalised vectors, then we compute its arccosinus to get the angle
+        direction_loss=torch.acos(torch.sum(pred_momentum*target_momentum,dim=-1)/(pred_norm*target_norm+1e-9))
+        
+        ## For the norm loss, we compute the squared difference (MSE) of the two norms
+        norm_loss=(pred_norm-target_norm)**2
+        
+        ## The total loss is the product of the two losses, with some constants to avoid one loss being neglected
+        total_loss=((direction_loss**2+self.angle_resolution**2)*(norm_loss+self.norm_resolution**2)-(self.angle_resolution**2)*(self.norm_resolution**2))*1/(10*self.angle_resolution*10*self.norm_resolution)**2
+    
+        if self.reduction=='mean':
+            return total_loss.mean()
+        elif self.reduction=='sum':
+            return total_loss.sum()
+        else:
+            return total_loss
+
+class MomDirLoss(torch.nn.modules.loss._Loss):
+    
+    def __init__(self, dir_weight:float=25. , norm_weight:float=1e-2, reg_weight:float=1., reduction: str = 'mean', **kwargs):
+        super().__init__(reduction=reduction, **kwargs)
+        self.dir_weight=dir_weight
+        self.norm_weight=norm_weight
+        self.reg_weight=reg_weight
+        self.loss_fn=torch.nn.MSELoss(reduction=reduction)
+    
+    def forward(self, pred:Tensor, target:Tensor) -> Tensor:
+        pred_momentum=2.*(pred-0.5)
+        target_momentum=2.*(target-0.5)
+        
+        pred_norm=torch.linalg.norm(pred_momentum,dim=-1)
+        target_norm=torch.linalg.norm(target_momentum,dim=-1)
+        dir_loss=(1.-torch.sum(pred_momentum*target_momentum,dim=-1)/(pred_norm*target_norm+1e-9)) if self.dir_weight>0. else torch.zeros_like(pred_norm)
+        regularisation_loss=self.reg_weight*100.*torch.relu(pred_norm**2-4.)+torch.relu(1./pred_norm**2-1e8) if self.reg_weight>0. else torch.zeros_like(pred_norm)
+        
+        if self.reduction=='mean':
+            dir_loss=dir_loss.mean()
+            regularisation_loss=regularisation_loss.mean()
+        elif self.reduction=='sum':
+            dir_loss=dir_loss.sum()
+            regularisation_loss=regularisation_loss.sum()
+
+        norm_loss=self.norm_weight*self.loss_fn(pred,target) if self.norm_weight>0. else torch.zeros_like(pred_norm)
+        
+        return dir_loss+norm_loss+regularisation_loss
+    
+class MomSphLoss(MomDirLoss):
+    
+    def forward(self, pred:Tensor, target:Tensor) -> Tensor:
+        
+        pred_norm=pred[...,0]
+        pred_theta=pred[...,1]
+        pred_phi=pred[...,2]
+        
+        target_momentum=2.*(target-0.5)
+        target_norm=torch.linalg.norm(target_momentum,dim=-1)
+        target_2d_norm=torch.linalg.norm(target_momentum[...,0:2],dim=-1) if self.dir_weight>0. else torch.zeros_like(pred_norm)
+        
+        target_theta=torch.acos(target_momentum[...,2]/(target_norm+1e-9)) if self.dir_weight>0. else torch.zeros_like(pred_norm)
+        target_phi=torch.sign(target_momentum[...,1])*torch.acos(target_momentum[...,0]/(target_2d_norm+1e-9)) if self.dir_weight>0. else torch.zeros_like(pred_norm)
+        
+        norm_loss=self.norm_weight*self.loss_fn(pred_norm,target_norm) if self.norm_weight>0. else 0.
+        
+        dir_loss=self.dir_weight*(1-torch.cos(target_theta-pred_theta))*(target_norm>1e-9) if self.dir_weight>0. else torch.zeros_like(pred_norm)
+        dir_loss+=self.dir_weight*(1-torch.cos(target_phi-pred_phi))*(target_2d_norm>1e-9) if self.dir_weight>0. else torch.zeros_like(pred_norm)
+        
+        regularisation_loss=(pred_theta**2)*(pred_theta<0.)+((pred_theta-torch.pi)**2)*(pred_theta>torch.pi) if self.reg_weight>0. else torch.zeros_like(pred_norm)
+        regularisation_loss+=(pred_phi**2)*(pred_phi<0.)+((pred_phi-2*torch.pi)**2)*(pred_phi>2*torch.pi) if self.reg_weight>0. else torch.zeros_like(pred_norm)
+        regularisation_loss*=self.reg_weight*100
+        
+        if self.reduction=='mean':
+            dir_loss=dir_loss.mean()
+            regularisation_loss=regularisation_loss.mean()
+        elif self.reduction=='sum':
+            dir_loss=dir_loss.sum()
+            regularisation_loss=regularisation_loss.sum()
+        
+        
+        return dir_loss+norm_loss+regularisation_loss
+        
+        
 
     
 class SumPerf(SumLoss):
@@ -182,57 +310,64 @@ class SumPerf(SumLoss):
         return SumPerf(losses=losses, weights=weights)
 
 
-def create_baseline_model(x_in_channels:int=x_in_channels,
-                          y_out_channels:int=y_out_channels,
-                          device:torch.device=device):
-
-    return minkunet.MinkUNet34B(in_channels=x_in_channels, out_channels=y_out_channels, D=3).to(device)
-
-
-def create_transformer_model(x_in_channels:int=x_in_channels,
-                            y_out_channels:int=y_out_channels,
-                            device:torch.device=device,
-                            D_MODEL:int = 64,
-                            N_HEAD:int = 8,
-                            DIM_FEEDFORWARD:int = 128,
-                            NUM_ENCODER_LAYERS:int = 5):
-
-    return FittingTransformer(num_encoder_layers=NUM_ENCODER_LAYERS,
-                                 d_model=D_MODEL,
-                                 n_head=N_HEAD,
-                                 input_size=3+x_in_channels,
-                                 output_size=y_out_channels,
-                                 dim_feedforward=DIM_FEEDFORWARD).to(device)
 
 
 
-baseline_model=create_baseline_model()
-transformer_model=create_transformer_model()
-
-
-PAD_IDX=-1.
 
 
 loss_fn=SumLoss(losses=[
                             PartialLoss(nn.MSELoss(), [0,1,2]), # node position
-                            PartialLoss(nn.MSELoss(), [3,4,5]), # node direction
-                            PartialLoss(nn.MSELoss(), [6]), # number of particles
-                            PartialLoss(nn.MSELoss(), [7]), # energy deposited
-                            PartialLoss(nn.MSELoss(), [8]), # particle charge
-                            PartialLoss(nn.MSELoss(), [9]), # particle mass
-                            PartialClassificationLoss(nn.CrossEntropyLoss(), [10+i for i in range(len(particles_classes.keys()))], 10), # particle class
-                        ],
+                            PartialLoss(nn.MSELoss(), [3,4,5]), # node momentum
+                            ],
                 weights=[
-                            1.e6, # node position
-                            1.e2, # node direction
-                            2.e3, # number of particles
-                            5.e5, # energy deposited
-                            1.e1, # particle charge
-                            5.e2, # particle mass
-                            5.e-1, # particle class
+                            1.e4, # node position
+                            1.e2, # node momentum
+                        ])
+
+loss_fn_mom_loss=SumLoss(losses=[
+                            PartialLoss(nn.MSELoss(), [0,1,2]), # node position
+                            PartialLoss(MomentumLoss(), [3,4,5]), # node momentum
+                            ],
+                weights=[
+                            1.e4, # node position
+                            1.e2, # node momentum
+                        ])
+
+loss_fn_momdir_loss=SumLoss(losses=[
+                            PartialLoss(nn.MSELoss(), [0,1,2]), # node position
+                            PartialLoss(MomDirLoss(dir_weight=1.,norm_weight=0.,reg_weight=0.), [3,4,5]), # node momentum direction
+                            PartialLoss(MomDirLoss(dir_weight=0.,norm_weight=0.01,reg_weight=0.), [3,4,5]), # node momentum norm
+                            PartialLoss(MomDirLoss(dir_weight=0.,norm_weight=0.,reg_weight=1.), [3,4,5]), # node momentum regularisation
+                            ],
+                weights=[
+                            1.e4, # node position
+                            1.e2, # node momentum direction
+                            1.e2, # node momentum norm
+                            1.e2, # node momentum regularisation
+                        ])
+
+loss_fn_momsph=SumLoss(losses=[
+                            PartialLoss(nn.MSELoss(), [0,1,2]), # node position
+                            PartialLoss(MomSphLoss(dir_weight=1.,norm_weight=0.,reg_weight=0.), [3,4,5]), # node momentum direction
+                            PartialLoss(MomSphLoss(dir_weight=0.,norm_weight=0.01,reg_weight=0.), [3,4,5]), # node momentum norm
+                            PartialLoss(MomSphLoss(dir_weight=0.,norm_weight=0.,reg_weight=1.), [3,4,5]), # node momentum regularisation
+                            ],
+                weights=[
+                            1.e4, # node position
+                            1.e2, # node momentum direction
+                            1.e2, # node momentum norm
+                            1.e2, # node momentum regularisation
                         ])
 
 perf_fn=SumPerf.from_SumLoss(loss_fn)
+
+
+
+#################### TRAINING DEFAULT PARAMETERS #####################    
+
+
+baseline_model=create_baseline_model()
+transformer_model=create_transformer_model()
 
 # Optimizer and schedulers
 lr = 0.01
@@ -284,6 +419,12 @@ def create_scalers(root:str,
         pk.dump([scaler_x, scaler_y, scaler_c], fd)
 
 
+
+
+#################### DATALOADER FUNCTIONS #####################    
+
+
+
 PREMASKING=True
 
 def filtering_events(x):
@@ -292,6 +433,7 @@ def filtering_events(x):
     else:
         return x['c'] is not None and len(x['c'])<1000
 
+PAD_IDX=-1.
 
 # function to collate data samples for a transformer
 def collate_transformer(batch):
@@ -332,17 +474,20 @@ def collate_transformer(batch):
     
 
     lens = [len(x) for x in feats]
-
-    feats = torch.nn.utils.rnn.pad_sequence(feats, batch_first=False, padding_value=PAD_IDX)
-    targets = torch.nn.utils.rnn.pad_sequence(targets, batch_first=False, padding_value=PAD_IDX)
-    coords = torch.nn.utils.rnn.pad_sequence(coords, batch_first=False, padding_value=PAD_IDX)
     try:
-        aux = torch.nn.utils.rnn.pad_sequence(aux, batch_first=False, padding_value=PAD_IDX)
-    except TypeError: # if the aux variables are None, the cat will raise a type error
-        aux = None
-    masks = torch.nn.utils.rnn.pad_sequence(masks, batch_first=False, padding_value=False)
+        feats = torch.nn.utils.rnn.pad_sequence(feats, batch_first=False, padding_value=PAD_IDX)
+        targets = torch.nn.utils.rnn.pad_sequence(targets, batch_first=False, padding_value=PAD_IDX)
+        coords = torch.nn.utils.rnn.pad_sequence(coords, batch_first=False, padding_value=PAD_IDX)
+        try:
+            aux = torch.nn.utils.rnn.pad_sequence(aux, batch_first=False, padding_value=PAD_IDX)
+        except TypeError: # if the aux variables are None, the cat will raise a type error
+            aux = None
+        masks = torch.nn.utils.rnn.pad_sequence(masks, batch_first=False, padding_value=False)
 
-    return {'f':feats, 'y':targets, 'aux':aux, 'c':coords, 'mask':masks, 'lens':lens,}
+        return {'f':feats, 'y':targets, 'aux':aux, 'c':coords, 'mask':masks, 'lens':lens,}
+    
+    except RuntimeError:
+        return{'f':None, 'y':None, 'aux':None, 'c':None, 'mask':None, 'lens':None,}
 
 
 # function to collate data samples for a MinkUNet
@@ -415,6 +560,9 @@ def create_mask_src(src):
     return src_mask, src_padding_mask
 
 
+
+#################### TRAINING FUNCTIONS #####################    
+
 def execute_model(model:torch.nn.Module,
                 data:dict,
                 model_type:str='minkowski', # or 'transformer'
@@ -428,72 +576,76 @@ def execute_model(model:torch.nn.Module,
     """
     Returns the prediction, target and mask for a given model. Adapts whether it is 'minkowski' type (SparseTensors) or 'transformer' type (PaddedSequence).
     """
-    aux=None
-    coord=None
-    feats=None
-    event_id=None
-    
-    if model_type=='minkowski':
-        # arranging the data to be into Sparse Minkowski Tensors
-        data={'f':arrange_sparse_minkowski(data,device),'y':arrange_truth(data,device),'aux':arrange_aux(data,device),'c':data['c'], 'mask':arrange_mask(data,device)}
-        # run the model
-        batch_output=model(data['f'])
-        # flatten the data
-        pred=batch_output.F
-        targ=data['y'].F
-        # masking the data (noise hits)
-        mask=data['mask'].F.float()
-        targ=targ*mask
-        pred=pred*mask
-        # if necessary extract the auxiliary variables
-        if do_we_consider_aux:
-            aux=data['aux'].F
-        # if necessary extract the coordinates
-        if do_we_consider_coord:
-            coord=data['f'].C[:,1:] # the first index is the batch index, which we remove
-        # if necessary extract the features
-        if do_we_consider_feat:
-            feats=data['f'].F
-        # if necessary extract the event id
-        if do_we_consider_event_id:
-            event_id=data['f'].C[:,[0]]+last_event_id
-            
-    elif model_type=='transformer':
-        features=data['f'].to(device)
-        # create masks
-        src_mask, src_padding_mask = create_mask_src(features)
-        # run model
-        batch_output = model(features, src_mask, src_padding_mask)
-        # masking the data (noise hits)
-        mask=data['mask'].to(device).float()[...,None] # adds an extra dimension to match that of the features/targets
-        targ=data['y'].to(device)*mask
-        pred=batch_output*mask
-        # packing the data
-        pred = torch.nn.utils.rnn.pack_padded_sequence(pred, data['lens'], batch_first=False, enforce_sorted=False)
-        targ = torch.nn.utils.rnn.pack_padded_sequence(targ, data['lens'], batch_first=False, enforce_sorted=False)
-        # flattening the data
-        pred=pred.data
-        targ=targ.data
-        # if necessary extract the auxiliary variables
-        if do_we_consider_aux:
-            aux=torch.nn.utils.rnn.pack_padded_sequence(data['aux'], data['lens'], batch_first=False, enforce_sorted=False).data
-        # if necessary extract the coordinates
-        if do_we_consider_coord:
-            coord=torch.nn.utils.rnn.pack_padded_sequence(data['c'], data['lens'], batch_first=False, enforce_sorted=False).data
-        # if necessary extract the features
-        if do_we_consider_feat:
-            feats=torch.nn.utils.rnn.pack_padded_sequence(features, data['lens'], batch_first=False, enforce_sorted=False).data
-        # if necessary extract the event id
-        if do_we_consider_event_id:
-            event_id=torch.nn.utils.rnn.pack_padded_sequence(torch.ones(features.shape[:-1])[...,None]*torch.arange(features.shape[1])[None,:,None]+last_event_id, data['lens'], batch_first=False, enforce_sorted=False).data
-        # change the mask data to fit the format of pred, targs, ...
-        mask=torch.nn.utils.rnn.pack_padded_sequence(mask, data['lens'], batch_first=False, enforce_sorted=False).data
+    if data['f'] is not None:
+        aux=None
+        coord=None
+        feats=None
+        event_id=None
         
+        if model_type=='minkowski':
+            # arranging the data to be into Sparse Minkowski Tensors
+            data={'f':arrange_sparse_minkowski(data,device),'y':arrange_truth(data,device),'aux':arrange_aux(data,device),'c':data['c'], 'mask':arrange_mask(data,device)}
+            # run the model
+            batch_output=model(data['f'])
+            # flatten the data
+            pred=batch_output.F
+            targ=data['y'].F
+            # masking the data (noise hits)
+            mask=data['mask'].F.float()
+            targ=targ*mask
+            pred=pred*mask
+            # if necessary extract the auxiliary variables
+            if do_we_consider_aux:
+                aux=data['aux'].F
+            # if necessary extract the coordinates
+            if do_we_consider_coord:
+                coord=data['f'].C[:,1:] # the first index is the batch index, which we remove
+            # if necessary extract the features
+            if do_we_consider_feat:
+                feats=data['f'].F
+            # if necessary extract the event id
+            if do_we_consider_event_id:
+                event_id=data['f'].C[:,[0]]+last_event_id
+                
+        elif model_type=='transformer':
+            features=data['f'].to(device)
+            # create masks
+            src_mask, src_padding_mask = create_mask_src(features)
+            # run model
+            batch_output = model(features, src_mask, src_padding_mask)
+            # masking the data (noise hits)
+            mask=data['mask'].to(device).float()[...,None] # adds an extra dimension to match that of the features/targets
+            targ=data['y'].to(device)*mask
+            pred=batch_output*mask
+            # packing the data
+            pred = torch.nn.utils.rnn.pack_padded_sequence(pred, data['lens'], batch_first=False, enforce_sorted=False)
+            targ = torch.nn.utils.rnn.pack_padded_sequence(targ, data['lens'], batch_first=False, enforce_sorted=False)
+            # flattening the data
+            pred=pred.data
+            targ=targ.data
+            # if necessary extract the auxiliary variables
+            if do_we_consider_aux:
+                aux=torch.nn.utils.rnn.pack_padded_sequence(data['aux'], data['lens'], batch_first=False, enforce_sorted=False).data
+            # if necessary extract the coordinates
+            if do_we_consider_coord:
+                coord=torch.nn.utils.rnn.pack_padded_sequence(data['c'], data['lens'], batch_first=False, enforce_sorted=False).data
+            # if necessary extract the features
+            if do_we_consider_feat:
+                feats=torch.nn.utils.rnn.pack_padded_sequence(features, data['lens'], batch_first=False, enforce_sorted=False).data
+            # if necessary extract the event id
+            if do_we_consider_event_id:
+                event_id=torch.nn.utils.rnn.pack_padded_sequence(torch.ones(features.shape[:-1])[...,None]*torch.arange(features.shape[1])[None,:,None]+last_event_id, data['lens'], batch_first=False, enforce_sorted=False).data
+            # change the mask data to fit the format of pred, targs, ...
+            mask=torch.nn.utils.rnn.pack_padded_sequence(mask, data['lens'], batch_first=False, enforce_sorted=False).data
+            
+        else:
+            raise ValueError(f"Wrong model type {model_type}")
+        
+        return pred, targ, mask, aux, coord, feats, event_id
+    
     else:
-        raise ValueError(f"Wrong model type {model_type}")
-    
-    return pred, targ, mask, aux, coord, feats, event_id
-    
+        return Tensor(), Tensor(), Tensor(), Tensor(), Tensor(), Tensor(), Tensor(),
+        
 
 
 
@@ -533,23 +685,25 @@ def train(model:torch.nn.Module,
                                 model_type=model_type,
                                 device=device)
         
-        time_model+=time.perf_counter()-t0
-        t0=time.perf_counter()
+        if pred.numel()>0:
         
-        loss,loss_composition=loss_func(pred,targ)
-        loss.backward()
-        
-        # Update progress bar
-        train_loop.set_postfix({"loss":  f"{loss.item():.5f}","lr":f"{optimizer.param_groups[0]['lr']:.2e}"})
-          
-        sum_loss += loss.item()
-        comp_loss += loss_composition
-        
-        optimizer.step()
-        warmup_scheduler.step()
-        time_steps+=time.perf_counter()-t0
-        
-        t0=time.perf_counter()
+            time_model+=time.perf_counter()-t0
+            t0=time.perf_counter()
+            
+            loss,loss_composition=loss_func(pred,targ)
+            loss.backward()
+            
+            # Update progress bar
+            train_loop.set_postfix({"loss":  f"{loss.item():.5f}","lr":f"{optimizer.param_groups[0]['lr']:.2e}"})
+            
+            sum_loss += loss.item()
+            comp_loss += loss_composition
+            
+            optimizer.step()
+            warmup_scheduler.step()
+            time_steps+=time.perf_counter()-t0
+            
+            t0=time.perf_counter()
         
     if benchmarking:
         print(f"Training: Loading: {time_load:.2f} s \t Arranging: {time_model:.2f} s \t Model steps: {time_steps:.2f} s \t Total: {time_load+time_model+time_steps:.2f} s")
@@ -596,22 +750,24 @@ def test(model:torch.nn.Module,
                                 model_type=model_type,
                                 device=device)
         
-        time_model+=time.perf_counter()-t0
-        t0=time.perf_counter()
-        
-        loss,loss_composition=loss_func(pred,targ)
-        sum_loss += loss.item()
-        comp_loss += loss_composition
-        
-        # Update progress bar
-        test_loop.set_postfix({"loss":  f"{loss.item():.5f}"})
-        
-        true_targets+=targ.tolist()
-        predictions+=pred.tolist()
-        
-        time_steps+=time.perf_counter()-t0
-        
-        t0=time.perf_counter()
+        if pred.numel()>0:
+            
+            time_model+=time.perf_counter()-t0
+            t0=time.perf_counter()
+            
+            loss,loss_composition=loss_func(pred,targ)
+            sum_loss += loss.item()
+            comp_loss += loss_composition
+            
+            # Update progress bar
+            test_loop.set_postfix({"loss":  f"{loss.item():.5f}"})
+            
+            true_targets+=targ.tolist()
+            predictions+=pred.tolist()
+            
+            time_steps+=time.perf_counter()-t0
+            
+            t0=time.perf_counter()
         
     if benchmarking:
         print(f"Validating: Loading: {time_load:.2f} s \t Model run: {time_model:.2f} s \t Loss computation: {time_steps:.2f} s \t Total: {time_load+time_model+time_steps:.2f} s")
@@ -678,21 +834,23 @@ def test_full(model:torch.nn.Module,
                                                     last_event_id=last_event_id,
                                                     )
         
-        pred.append(_pred.cpu().detach().numpy())
-        target.append(_targ.cpu().detach().numpy())
-        mask.append(_mask.cpu().detach().numpy())
-        if do_we_consider_aux:
-            aux.append(_aux.cpu().detach().numpy())
-        if do_we_consider_coord:
-            coord.append(_coord.cpu().detach().numpy())
-        if do_we_consider_feat:
-            feat.append(_feat.cpu().detach().numpy())
-        if do_we_consider_event_id:
-            event_id.append(_event_id.cpu().detach().numpy())
-            last_event_id=event_id[-1].max()
-        
-        if i>n_batches:
-            break
+        if _pred.numel()>0:
+            
+            pred.append(_pred.cpu().detach().numpy())
+            target.append(_targ.cpu().detach().numpy())
+            mask.append(_mask.cpu().detach().numpy())
+            if do_we_consider_aux:
+                aux.append(_aux.cpu().detach().numpy())
+            if do_we_consider_coord:
+                coord.append(_coord.cpu().detach().numpy())
+            if do_we_consider_feat:
+                feat.append(_feat.cpu().detach().numpy())
+            if do_we_consider_event_id:
+                event_id.append(_event_id.cpu().detach().numpy())
+                last_event_id=event_id[-1].max()
+            
+            if i>n_batches:
+                break
         
     
         
@@ -709,7 +867,8 @@ def measure_performances(results_from_test_full:dict,
                         do_we_consider_aux:bool=False,
                         do_we_consider_coord:bool=False,
                         do_we_consider_feat:bool=True,
-                        do_we_consider_event_id:bool=True,) -> dict[str,np.ndarray]:
+                        do_we_consider_event_id:bool=True,
+                        mom_spherical_coord:bool=False,) -> dict[str,np.ndarray]:
     aux=None
     coord=None
     features=None
@@ -744,7 +903,7 @@ def measure_performances(results_from_test_full:dict,
         if dataset.scale_coordinates:
             coord=dataset.scaler_c.inverse_transform(coord)
         else:
-            transform_inverse_cube(coord)
+            coord=transform_inverse_cube(coord)
     
     mask=np.vstack(results_from_test_full['mask'])
     targets=np.vstack(results_from_test_full['y'])
@@ -764,8 +923,24 @@ def measure_performances(results_from_test_full:dict,
         _scale=dataset.scaler_y.scale_[dataset.y_indexes_with_scale]
         targets[:,np.arange(len(dataset.y_indexes_with_scale))]-=_min
         targets[:,np.arange(len(dataset.y_indexes_with_scale))]/=_scale
-        _pred[:,np.arange(len(dataset.y_indexes_with_scale))]-=_min
-        _pred[:,np.arange(len(dataset.y_indexes_with_scale))]/=_scale
+        
+        if not mom_spherical_coord:
+            _pred[:,np.arange(len(dataset.y_indexes_with_scale))]-=_min
+            _pred[:,np.arange(len(dataset.y_indexes_with_scale))]/=_scale
+        else:
+            ## we are assuming that there are both the position and the momentum in the predictions, so that the momentum is in indexes 3:6  
+            _pred[:,0:3]-=_min[0:3]
+            _pred[:,0:3]/=_scale[0:3]
+            pred_norm=_pred[:,3]/_scale[3]
+            pred_theta=_pred[:,4]
+            pred_phi=_pred[:,5]
+            pred_momx=pred_norm*np.sin(pred_theta)*np.cos(pred_phi)
+            pred_momy=pred_norm*np.sin(pred_theta)*np.sin(pred_phi)
+            pred_momz=pred_norm*np.cos(pred_theta)
+            _pred[:,3]=pred_momx
+            _pred[:,4]=pred_momy
+            _pred[:,5]=pred_momz
+             
         if dataset.targets_n_classes[-1]>0:
             ## If we have some class predictions, we need to argmax
             pred=np.zeros_like(targets)
@@ -777,11 +952,13 @@ def measure_performances(results_from_test_full:dict,
     targets_=torch.Tensor(targets*mask).to(device)
     pred_=torch.Tensor(_pred*mask).to(device)
     del _pred
+    
+    scores=None
 
-    scores=perf_func(pred_,targets_)
+    # scores=perf_func(pred_,targets_)
     del pred_, targets_
     
-    scores=scores.cpu().numpy()
+    # scores=scores.cpu().numpy()
     
     if do_we_consider_event_id:
         event_id=np.vstack(results_from_test_full['event_id'])
@@ -924,8 +1101,8 @@ def training(device:torch.device,
         epoch_bar.set_postfix(
             {
                 "Tloss": f"{LOSSES[0][-1]:.2e}",
-                # "Vloss": f"{LOSSES[1][-1]:.2e}",
-                "m5VL": f"{np.mean(LOSSES[1][-5:]):.2e}",
+                "Vloss": f"{LOSSES[1][-1]:.2e}",
+                # "m5VL": f"{np.mean(LOSSES[1][-5:]):.2e}",
             }
         )
 
@@ -972,14 +1149,26 @@ def main_worker(device:torch.device,
 
     multi_pass=args.multi_pass
     
-    ## Select only the targets for the loss function
-    loss_fn=loss_fn[dataset.targets]
-    
-    ## Replace the weights of the loss function
-    loss_fn.weights=[args.weights[k] for k in dataset.targets]
+    if args.mom_loss:
+        # loss_fn.losses[1].loss_func=MomentumLoss()
+        loss_fn=loss_fn_mom_loss
+    elif args.momdir_loss:
+        # loss_fn.losses[1].loss_func=MomDirLoss()
+        loss_fn=loss_fn_momdir_loss
+    elif args.momsph:
+        # loss_fn.losses[1].loss_func=MomSphLoss(dir_weight=1.,norm_weight=1e-2)
+        loss_fn=loss_fn_momsph
     
     if args.targets is not None:
-        loss_fn.rebuild_partial_losses()
+        ## Select only the targets for the loss function
+        loss_fn=loss_fn[dataset.targets]
+        
+        ## Replace the weights of the loss function
+        loss_fn.weights=[args.weights[k] for k in dataset.targets]
+    
+    # ## Reconstruct the partial loss indexes, was useful when using one loss per target
+    # if args.targets is not None:
+    #     loss_fn.rebuild_partial_losses()
     
     ## Get whether we will be using the baseline model or the transformer
     use_baseline=args.baseline
@@ -998,6 +1187,10 @@ def main_worker(device:torch.device,
         model=create_transformer_model(y_out_channels=sum(dataset.targets_lengths)+sum(dataset.targets_n_classes), x_in_channels=len(args.inputs) if args.inputs is not None else 2)
     
     print(model.__str__().split('\n')[0][:-1]) # Print the model name
+    
+    if args.resume:
+        print("Loading model state dict save...")
+        model.load_state_dict(torch.load(f"{args.save_path}models/trackfit_model_{'baseline_' if use_baseline else ''}{j}.torch"))
     
     if multi_GPU:
         model=torch.nn.parallel.DistributedDataParallel(model.to(device), device_ids=[device])
@@ -1019,7 +1212,7 @@ def main_worker(device:torch.device,
     # Optimizer and scheduler
     lr = args.lr
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, betas=(0.9, 0.999), eps=1e-9, weight_decay=0.01)
-    num_steps_one_cycle = 25
+    num_steps_one_cycle = 80
     num_warmup_steps = 10
     cosine_annealing_steps = len_train_loader * num_steps_one_cycle
     lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=cosine_annealing_steps, T_mult=1, eta_min=lr*(1e-2))
@@ -1073,8 +1266,10 @@ if __name__ == "__main__":
     parser.add_argument('dataset_folder',metavar='Dataset_Folder', type=str, help="Folder in which are stored the event_#.npz files for training")
     parser.add_argument('scaler_file',metavar='Scaler_File', type=str, help="File storing the dataset features scalers")
     parser.add_argument('save_path',metavar='Save_Path', type=str, help="Path to save results and models")
+    parser.add_argument('--test_only', action='store_true', help='runs only the test (measure performances, plots, ...)')
     parser.add_argument('-T', '--test', action='store_true', help='runs test after training (measure performances, plots, ...)')
     parser.add_argument('-B', '--baseline', action='store_true', help='use the baseline model (MinkUNet), otherwise use the transformer')
+    parser.add_argument('-R', '--resume', action='store_true', help='resume the training by loading the saved model state dictionary')
     parser.add_argument('-m', '--multi_GPU', action='store_true', help='runs the script on multi GPU')
     parser.add_argument('-b', '--benchmarking', action='store_true', help='prints the duration of the different parts of the code')
     parser.add_argument('-s', '--sub_tqdm', action='store_true', help='displays the progress bars of the train and test loops for each epoch')
@@ -1087,6 +1282,9 @@ if __name__ == "__main__":
     parser.add_argument('-t','--targets', type=int, nargs="*", default=None, help='the target indices to include')
     parser.add_argument('-i','--inputs', type=int, nargs="*", default=None, help='the input indices to include')
     parser.add_argument('--ms', type=str, default='distance', metavar='Masking Scheme', help='Which mask to use for the dataset (distance, primary, tag, ...)')
+    parser.add_argument('--mom_loss', action='store_true', help='use the momentum loss instead of the simple MSE')
+    parser.add_argument('--momdir_loss', action='store_true', help='use the momentum-direction loss instead of the simple MSE')  
+    parser.add_argument('--momsph', action='store_true', help='use spherical coordinates for the momentum')  
     args = parser.parse_args()
     
 
@@ -1116,60 +1314,62 @@ if __name__ == "__main__":
         global multi_GPU, benchmarking
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         
-        if multi_GPU:
-            print(f"Training on Multi GPU...")
-        else:
-            print(f"Training on Single GPU {device}...")
-        if benchmarking:
-            print("Benchmarking...")
-        if multi_pass!=1:
-            print(f"Multi pass {multi_pass}...")
-        if use_baseline:
-            print(f"Using baseline model...")
-
-        # generate dataset
-        dataset=PGunEvent(root=args.dataset_folder,
-                        shuffle=True,
-                        multi_pass=multi_pass,
-                        files_suffix='npz',
-                        scaler_file=args.scaler_file,
-                        use_true_tag=True,
-                        scale_coordinates=(not use_baseline),
-                        targets=args.targets,
-                        inputs=args.inputs,
-                        masking_scheme=args.ms)
+        if (not args.test_only):
         
-        if args.targets is not None or args.weights!=loss_fn.weights:
-            print(f"Selected targets are: "+"".join([f"{dataset.targets_names[k]} ({args.weights[dataset.targets[k]]:.1e})  " for k in range(len(dataset.targets_names))]))
+            if multi_GPU:
+                print(f"Training on Multi GPU...")
+            else:
+                print(f"Training on Single GPU {device}...")
+            if benchmarking:
+                print("Benchmarking...")
+            if multi_pass!=1:
+                print(f"Multi pass {multi_pass}...")
+            if use_baseline:
+                print(f"Using baseline model...")
 
-        t0=time.perf_counter()
-        
-
-        if multi_GPU:
-            # from sfgnets.track_fitting_net import main_worker
-            world_size = torch.cuda.device_count()
-            model, training_dict=torch.multiprocessing.spawn(main_worker, args=(
-                                                                    dataset,
-                                                                    args,
-                                                                    world_size,
-                                                                    multi_GPU), nprocs=world_size)
+            # generate dataset
+            dataset=PGunEvent(root=args.dataset_folder,
+                            shuffle=True,
+                            multi_pass=multi_pass,
+                            files_suffix='npz',
+                            scaler_file=args.scaler_file,
+                            use_true_tag=True,
+                            scale_coordinates=(not use_baseline),
+                            targets=args.targets,
+                            inputs=args.inputs,
+                            masking_scheme=args.ms)
             
-        else:
-            model, training_dict=main_worker(device,
-                                dataset,
-                                args,)
-            
-        t0=t0-time.perf_counter()
+            if args.targets is not None or args.weights!=loss_fn.weights:
+                print(f"Selected targets are: "+"".join([f"{dataset.targets_names[k]} ({args.weights[dataset.targets[k]]:.1e})  " for k in range(len(dataset.targets_names))]))
 
-        # torch.save(model.state_dict(), f"/scratch4/maubin/models/hittag_model_{j}.torch")
-        torch.save(training_dict,f"{args.save_path}results/trackfit_training_dict_{'baseline_' if use_baseline else ''}{j}.torch")
+            t0=time.perf_counter()
+            
+
+            if multi_GPU:
+                # from sfgnets.track_fitting_net import main_worker
+                world_size = torch.cuda.device_count()
+                model, training_dict=torch.multiprocessing.spawn(main_worker, args=(
+                                                                        dataset,
+                                                                        args,
+                                                                        world_size,
+                                                                        multi_GPU), nprocs=world_size)
+                
+            else:
+                model, training_dict=main_worker(device,
+                                    dataset,
+                                    args,)
+                
+            t0=t0-time.perf_counter()
+
+            # torch.save(model.state_dict(), f"/scratch4/maubin/models/hittag_model_{j}.torch")
+            torch.save(training_dict,f"{args.save_path}results/trackfit_training_dict_{'baseline_' if use_baseline else ''}{j}.torch")
         
-        if args.test:
+        if args.test or args.test_only:
             print("Testing the model...")
             testdataset_folder=args.dataset_folder[:-6]+"test/" ## we are assuming that the dataset_folder is of type "*_train/" whereas the testdataset folder will be "*_test/"
             
             testdataset=PGunEvent(root=testdataset_folder,
-                        shuffle=True,
+                        shuffle=False,
                         multi_pass=multi_pass,
                         files_suffix='npz',
                         scaler_file=args.scaler_file,
@@ -1179,7 +1379,14 @@ if __name__ == "__main__":
                         inputs=args.inputs,
                         masking_scheme=args.ms)
             
-            full_loader=full_dataset(dataset,
+            if use_baseline:
+                model=create_baseline_model(y_out_channels=sum(testdataset.targets_lengths)+sum(testdataset.targets_n_classes), x_in_channels=len(args.inputs) if args.inputs is not None else 2)
+            else:
+                model=create_transformer_model(y_out_channels=sum(testdataset.targets_lengths)+sum(testdataset.targets_n_classes), x_in_channels=len(args.inputs) if args.inputs is not None else 2)
+            
+            model.load_state_dict(torch.load(f"{args.save_path}models/trackfit_model_{'baseline_' if use_baseline else ''}{j}.torch"))
+            
+            full_loader=full_dataset(testdataset,
                                     collate=collate_minkowski if use_baseline else collate_transformer,
                                     batch_size=args.batch_size,)
             
@@ -1195,25 +1402,54 @@ if __name__ == "__main__":
                                                     )
 
             if args.targets is not None:
-                    perf_fn=perf_fn[args.targets]
-                    perf_fn.rebuild_partial_losses()
+                if args.mom_loss:
+                    loss_fn.losses[1].loss_func=MomentumLoss()
+                perf_fn=SumPerf.from_SumLoss(loss_fn)[args.targets]
+                # perf_fn.rebuild_partial_losses()
 
             all_results=measure_performances(all_results,
-                                            dataset,
+                                            testdataset,
                                             perf_fn,
                                             device, 
                                             model_type="minkowski" if use_baseline else "transformer",
                                             do_we_consider_aux=True,
                                             do_we_consider_coord=True,
-                                            do_we_consider_feat=True,)
+                                            do_we_consider_feat=True,
+                                            mom_spherical_coord=args.momsph)
 
             with open(f'{args.save_path}results/track_fitting_model_{"baseline_" if use_baseline else ""}{j}_pred.pkl', 'wb') as file:
                     pk.dump(all_results,file)
                     
             plots.plots((all_results,testdataset),
-                        plots_chosen=["pred_X","euclidian_distance","euclidian_distance_by_pdg","perf_charge","perf_distance"],
-                        save_path=f'{args.save_path}plots/track_fitting_model_{"baseline_" if use_baseline else ""}{j}.png',
+                        plots_chosen=["pred_X","euclidian_distance","euclidian_distance_by_pdg","perf_charge","perf_distance", "euclidian_distance_by_primary", "perf_traj_length", "perf_kin_ener"],
+                        savefig_path=f'{args.save_path}plots/track_fitting_model_{"baseline_" if use_baseline else ""}{j}.png',
                         model_name=str(j),
+                        show=False,
+                        )
+            
+            if 1 in args.targets:
+                plots.plots((all_results,testdataset),
+                        plots_chosen=["pred_X","euclidian_distance","euclidian_distance_by_pdg","perf_charge","perf_distance", "euclidian_distance_by_primary", "perf_traj_length", "perf_kin_ener"],
+                        savefig_path=f'{args.save_path}plots/track_fitting_model_{"baseline_" if use_baseline else ""}{j}.png',
+                        model_name=str(j),
+                        mode='mom',
+                        show=False,
+                        )
+                
+                plots.plots((all_results,testdataset),
+                        plots_chosen=["pred_X","euclidian_distance","euclidian_distance_by_pdg","perf_charge","perf_distance", "euclidian_distance_by_primary", "perf_traj_length", "perf_kin_ener"],
+                        savefig_path=f'{args.save_path}plots/track_fitting_model_{"baseline_" if use_baseline else ""}{j}.png',
+                        model_name=str(j),
+                        mode='mom_d',
+                        show=False,
+                        )
+                
+                plots.plots((all_results,testdataset),
+                        plots_chosen=["pred_X","euclidian_distance","euclidian_distance_by_pdg","perf_charge","perf_distance", "euclidian_distance_by_primary", "perf_traj_length", "perf_kin_ener"],
+                        savefig_path=f'{args.save_path}plots/track_fitting_model_{"baseline_" if use_baseline else ""}{j}.png',
+                        model_name=str(j),
+                        mode='mom_n',
+                        show=False,
                         )
 
     main()

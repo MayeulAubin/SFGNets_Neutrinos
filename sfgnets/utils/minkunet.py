@@ -21,6 +21,7 @@ class MinkUNetBase(ResNetBase):
     PLANES = (32, 64, 128, 256, 256, 128, 96, 96)
     INIT_DIM = 32
     OUT_TENSOR_STRIDE = 1
+    DROPOUT= 0.2
 
     # To use the model, must call initialize_coords before forward pass.
     # Once data is processed, call clear to reset the model before calling
@@ -99,6 +100,7 @@ class MinkUNetBase(ResNetBase):
             bias=True,
             dimension=D)
         self.relu = ME.MinkowskiReLU(inplace=True)
+        self.dropout= ME.MinkowskiDropout(p=self.DROPOUT)
 
     def forward(self, x):
         out = self.conv0p1s1(x)
@@ -119,12 +121,15 @@ class MinkUNetBase(ResNetBase):
         out = self.bn3(out)
         out = self.relu(out)
         out_b3p8 = self.block3(out)
+        out = self.dropout(out)
 
         # tensor_stride=16
         out = self.conv4p8s2(out_b3p8)
         out = self.bn4(out)
         out = self.relu(out)
         out = self.block4(out)
+        out = self.dropout(out)
+
 
         # tensor_stride=8
         out = self.convtr4p16s2(out)
@@ -133,11 +138,13 @@ class MinkUNetBase(ResNetBase):
 
         out = ME.cat(out, out_b3p8)
         out = self.block5(out)
+        out = self.dropout(out)
 
         # tensor_stride=4
         out = self.convtr5p8s2(out)
         out = self.bntr5(out)
         out = self.relu(out)
+        out = self.dropout(out)
 
         out = ME.cat(out, out_b2p4)
         out = self.block6(out)

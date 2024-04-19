@@ -659,7 +659,7 @@ def plot_event_display(data:DataContainer|tuple[dict,SparseEvent],
         data=DataContainer(*data) # construct the DataContainer out of the provided data
     
     X=data.all_results['c'][i].copy()
-    transform_inverse_cube(X)
+    X=transform_inverse_cube(X)
     f=data.dataset.scaler_minmax.inverse_transform(data.all_results['f'][i].copy())
     fig=_plotly_event_hittag(pos3d=X,
                             energies=np.clip(f[:,0],0,150),
@@ -750,7 +750,7 @@ def plots(data:DataContainer|tuple[dict,SparseEvent],
         suffix=savefig_path.split('.')[-1]
     
     for func in plots_chosen:
-        print(f"Plotting {func}...")
+        print(f"Plotting {func}...    {'saving fig at: '+root+func+suffix if savefig_path is not None else ''}")
         figs.append(globals()["plot_"+func](data=data,
                         show=show,
                         model_name=model_name,
