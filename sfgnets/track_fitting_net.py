@@ -237,7 +237,7 @@ class MomDirLoss(torch.nn.modules.loss._Loss):
             dir_loss=dir_loss.sum()
             regularisation_loss=regularisation_loss.sum()
 
-        norm_loss=self.norm_weight*self.loss_fn(pred,target) if self.norm_weight>0. else torch.zeros_like(pred_norm)
+        norm_loss=self.norm_weight*self.loss_fn(pred,target) if self.norm_weight>0. else 0.
         
         return dir_loss+norm_loss+regularisation_loss
     
@@ -342,7 +342,7 @@ loss_fn_momdir_loss=SumLoss(losses=[
                 weights=[
                             1.e4, # node position
                             1.e2, # node momentum direction
-                            1.e2, # node momentum norm
+                            1.e4, # node momentum norm
                             1.e2, # node momentum regularisation
                         ])
 
@@ -911,11 +911,15 @@ def measure_performances(results_from_test_full:dict,
     
     if dataset.y_indexes_with_scale is None:
         ## If all targets are considered, we aplly usual inverse transformation
-        targets[:,:10]=dataset.scaler_y.inverse_transform(targets[:,:10])
-        _pred[:,:10]=dataset.scaler_y.inverse_transform(_pred[:,:10])
-        pred=np.zeros_like(targets)
-        pred[:,:10]=_pred[:,:10]
-        pred[:,10]=np.argmax(_pred[:,10:],axis=-1)
+        targets=dataset.scaler_y.inverse_transform(targets)
+        pred=dataset.scaler_y.inverse_transform(_pred)
+        
+        ### In case of a classification task in index 10 (and after), use the following code
+        # targets[:,:10]=dataset.scaler_y.inverse_transform(targets[:,:10])
+        # _pred[:,:10]=dataset.scaler_y.inverse_transform(_pred[:,:10])
+        # pred=np.zeros_like(targets)
+        # pred[:,:10]=_pred[:,:10]
+        # pred[:,10]=np.argmax(_pred[:,10:],axis=-1)
         
     else:
         ## If only some targets are considered, we restrict the inverse transformation to those
@@ -1212,7 +1216,7 @@ def main_worker(device:torch.device,
     # Optimizer and scheduler
     lr = args.lr
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, betas=(0.9, 0.999), eps=1e-9, weight_decay=0.01)
-    num_steps_one_cycle = 80
+    num_steps_one_cycle = 120
     num_warmup_steps = 10
     cosine_annealing_steps = len_train_loader * num_steps_one_cycle
     lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=cosine_annealing_steps, T_mult=1, eta_min=lr*(1e-2))
@@ -1400,11 +1404,12 @@ if __name__ == "__main__":
                                                     do_we_consider_feat=True,
                                                     # max_batches=10,
                                                     )
+            perf_fn=SumPerf.from_SumLoss(loss_fn)
 
             if args.targets is not None:
                 if args.mom_loss:
                     loss_fn.losses[1].loss_func=MomentumLoss()
-                perf_fn=SumPerf.from_SumLoss(loss_fn)[args.targets]
+                perf_fn=perf_fn[args.targets]
                 # perf_fn.rebuild_partial_losses()
 
             all_results=measure_performances(all_results,
@@ -1427,7 +1432,7 @@ if __name__ == "__main__":
                         show=False,
                         )
             
-            if 1 in args.targets:
+            if args.targets is None or 1 in args.targets:
                 plots.plots((all_results,testdataset),
                         plots_chosen=["pred_X","euclidian_distance","euclidian_distance_by_pdg","perf_charge","perf_distance", "euclidian_distance_by_primary", "perf_traj_length", "perf_kin_ener"],
                         savefig_path=f'{args.save_path}plots/track_fitting_model_{"baseline_" if use_baseline else ""}{j}.png',

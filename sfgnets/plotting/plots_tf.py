@@ -267,7 +267,7 @@ def _plot_euclidian_distance_cdf(euclidian_distance:np.ndarray,
         ax2.set_xticks(np.linspace(x_range[0],x_range[1],21), minor=True)
         ax2.set_xlabel("Euclidian distance (mm)")
         if show_summary_stats:
-            ax2.text(0.808*(x_range[1]-x_range[0]),0.115, f"68%:    {np.quantile(euclidian_distance,q=0.68):.2f} {x_unit}\n95%:    {np.quantile(euclidian_distance,q=0.95):.2f} {x_unit}\n99%:    {np.quantile(euclidian_distance,q=0.99):.2f} {x_unit}", multialignment='left', bbox=dict(facecolor='white', alpha=0.5))
+            ax2.text(0.808*(x_range[1]-x_range[0]),0.115, f"68%:    {np.quantile(euclidian_distance,q=0.68):.3f} {x_unit}\n95%:    {np.quantile(euclidian_distance,q=0.95):.3f} {x_unit}\n99%:    {np.quantile(euclidian_distance,q=0.99):.3f} {x_unit}", multialignment='left', bbox=dict(facecolor='white', alpha=0.5))
         ax2.set_title(ax2_title)
         
     
@@ -756,6 +756,7 @@ def plots(data:DataContainer|tuple[dict,PGunEvent],
         args_['x_range']=(0,np.pi)
         args_['x_label']="Angle between true and predicted momentum directions (rad)"
         args_['ax_title']="Distribution of the angle between predicted and true momenta"
+        print(f"Fraction of wrong direction: {100*(1-np.searchsorted(np.sort(data.md_distance),v=np.pi/2,side='right')/len(data.md_distance)):.2f}%")
         data.m_euclidian_distance=data.md_distance
         data.recon_m_euclidian_distance=data.recon_md_distance
         

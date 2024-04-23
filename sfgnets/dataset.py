@@ -495,7 +495,8 @@ class PGunEvent(EventDataset):
     def getaux(self, data:np.lib.npyio.NpzFile):
         
         input_particle=data["input_particle"]
-        NTraj=data["NTraj"]
+        # NTraj=data["NTraj"]
+        traj_ID=data["traj_ID"]
         traj_parentID=data["traj_parentID"]
         # distance_node_point=data["distance_node_point"]
         distance_node_point=np.linalg.norm(data["node_c"][:,0:3]-data["c"],axis=-1)
@@ -509,10 +510,12 @@ class PGunEvent(EventDataset):
         event_entry=data['event_entry']
         recon_c=data['recon_c']
         recon_d=data['recon_d']
+        order_index=data['order_index']
+        particle_charge=data['p_charge']
         
-        aux=np.zeros((tag.shape[0],23))
+        aux=np.zeros((tag.shape[0],25))
         aux[:,0]=input_particle
-        aux[:,1]=NTraj
+        aux[:,1]=traj_ID
         aux[:,2]=traj_parentID
         aux[:,3]=distance_node_point
         aux[:,4:7]=momentum
@@ -525,6 +528,8 @@ class PGunEvent(EventDataset):
         aux[:,16]=event_entry
         aux[:,17:20]=recon_c
         aux[:,20:23]=recon_d
+        aux[:,23]=order_index
+        aux[:,24]=particle_charge
         
         return torch.FloatTensor(aux)
     
