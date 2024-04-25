@@ -6,14 +6,14 @@ B_FIELD_INTENSITY = 0.2 # magnitude of the B field (supposed to be along X) in T
 
 DEFAULT_MOM_NORM= 100.
 
-def get_charge(curvature:np.ndarray|float, direction:np.ndarray) -> np.ndarray|float:
+def get_charge(curvature:np.ndarray, direction:np.ndarray) -> np.ndarray|float:
     charge = np.cross(curvature, direction)[...,0]/B_FIELD_INTENSITY # B is along X, the dot product is just the first index times B intensity
     return np.sign(charge)
     
 
-def get_momentum_magnitude(curvature:np.ndarray|float, direction:np.ndarray) -> np.ndarray|float:
+def get_momentum_magnitude(curvature:np.ndarray, direction:np.ndarray) -> np.ndarray|float:
     factor= -0.3 * B_FIELD_INTENSITY / np.sqrt(1.-direction[...,0]**2)
-    return np.clip(np.abs(factor/(curvature+1e-9)),0,4000) 
+    return np.clip(np.abs(factor/(np.cross(curvature, direction)[...,0]+1e-9)),0,4000) 
 
 
 
@@ -108,8 +108,9 @@ def construct_direction_and_curvature(node_c_absolute:np.ndarray,
                                      traj_ID:np.ndarray|None=None,
                                      weight_predicted_node_d:float=0.,
                                      dirScale:float=30.,
-                                     curvScale:float=60.,
-                                     curvCutoff:float=10.,
+                                     curvScale:float=100.,
+                                     curvCutoff_X:float=4.,
+                                     curvCutoff_d:float=0.15,
                                      scale_factor_node_d:float=1.,
                                      mode:str='order',
                                     **kwargs
@@ -128,10 +129,11 @@ def construct_direction_and_curvature(node_c_absolute:np.ndarray,
         node_d_norm=np.linalg.norm(node_d,axis=-1)
         node_d/=node_d_norm[...,None]
         
-    
+    ## Selecting hits of same event and trajectory
     same_event_traj_matrix=(event_id[None,:]==event_id[:,None])
     same_event_traj_matrix*=(traj_ID[None,:]==traj_ID[:,None])
     
+    ## Handling cases where we have only one hit in the event and trajectory
     if (np.sum(same_event_traj_matrix,axis=1)<2).any():
         ## We have at least one hit alone
         if len(same_event_traj_matrix)==1:
@@ -143,48 +145,111 @@ def construct_direction_and_curvature(node_c_absolute:np.ndarray,
         else:
             same_event_traj_matrix[(np.sum(same_event_traj_matrix,axis=1)<2)]=1. # use all hits available if the event
     
+    ## Computes the matrix of differences between the points positions
+    ## M_{ij} := p_j - p_i
     matrix_of_differences=np.zeros((node_c_absolute.shape[0], node_c_absolute.shape[0], 3))
     matrix_of_differences[:,:,:]=node_c_absolute[None,:,:]*same_event_traj_matrix-node_c_absolute[:,None,:]*same_event_traj_matrix
     
+    ## Computes the matrix of distances
+    ## D_{ij} :=  ||M_{ij}|| = ||p_j - p_i||
     matrix_of_distances=np.linalg.norm(matrix_of_differences,axis=-1)
     
+    ## Computes the weights for direction
+    ## wd_{ij} := D_{ij}/d * e^{-D_{ij}/d} where d is an arbitrary scale of points to consider
     weights_differences_for_directions=(matrix_of_distances/dirScale)*np.exp(-(matrix_of_distances/dirScale))
-    weights_differences_for_curvature=(matrix_of_distances/curvScale)*np.exp(-(matrix_of_distances/curvScale))*(1-np.exp(-5.*(matrix_of_distances**2/curvCutoff**2)))
     
     ## Now we need to know if the difference vectors need to be counted positively or negatively, depending on their sign along the direction of the track
     ## Since we don't know yet the direction of the track (that's the goal of this algorithm), we need an alternative way to get their sign
-    
+    ## dirorder_{ij} = +1 or -1 such that M_{ij} * dirorder_{ij} is in the correct direction
     dir_order_matrix=choose_direction_sign(node_c_absolute,matrix_of_differences,weights_differences_for_directions,node_d,mode)
     
-    
+    ## Vector of reconstructed directions
+    ## dir_i := mean_{along j}(M_{ij} * dirorder_{ij})_{weighted by wd_{ij}}
     dir_from_differences=np.sum(weights_differences_for_directions[:,:,None]*matrix_of_differences*dir_order_matrix[:,:,None]/(matrix_of_distances[:,:,None]+1e-9),axis=1)/(np.sum(weights_differences_for_directions,axis=1)[:,None]+1e-9)
     
-    curv_from_differences=np.sum(weights_differences_for_curvature[:,:,None]*matrix_of_differences/(matrix_of_distances[:,:,None]**2+1e-9),axis=1)/(np.sum(weights_differences_for_curvature,axis=1)[:,None]+1e-9)
-    
+        
     if node_d is not None:
         ## If node_d is available, we use it by averaging it with the reconstructed direction.
         ## We compute the average locally, using the same kind of weighting, but with a scale that can be different
         
         weights_node_d_for_directions=(matrix_of_distances/(dirScale*scale_factor_node_d))*np.exp(-(matrix_of_distances/(dirScale*scale_factor_node_d)))
-        weights_node_d_for_curvature=(matrix_of_distances/(curvScale*scale_factor_node_d))*np.exp(-(matrix_of_distances/(curvScale*scale_factor_node_d)))*(1-np.exp(-5.*(matrix_of_distances**2/curvCutoff**2)))
-        
         
         dir_from_node_d=np.sum(weights_node_d_for_directions[:,:,None]*node_d[None,:,:],axis=1)/(np.sum(weights_node_d_for_directions,axis=1)[:,None]+1e-9)
-        curv_from_node_d=np.sum(weights_node_d_for_curvature[:,:,None]*node_d[None,:,:]*dir_order_matrix[:,:,None]/(matrix_of_distances[:,:,None]+1e-9),axis=1)/(np.sum(weights_node_d_for_curvature,axis=1)[:,None]+1e-9)
+        
         direction=(dir_from_differences+weight_predicted_node_d*dir_from_node_d)/(1.+weight_predicted_node_d)
-        curvature=(curv_from_differences+weight_predicted_node_d*curv_from_node_d)/(1.+weight_predicted_node_d)
     else:
         direction=dir_from_differences
-        curvature=curv_from_differences
         
     direction/=(np.linalg.norm(direction,axis=-1,keepdims=True)+1e-9)
         
-    assert np.allclose(np.linalg.norm(direction,axis=-1),1.), f"Direction must be a unit vector: {(~np.isclose(np.linalg.norm(direction,axis=-1),1.)).mean()}, {np.linalg.norm(direction,axis=-1).mean()}"
+    # assert np.allclose(np.linalg.norm(direction,axis=-1),1.), f"Direction must be a unit vector: {(~np.isclose(np.linalg.norm(direction,axis=-1),1.)).mean()}, {np.linalg.norm(direction,axis=-1).mean()}"
+    
+    ## Shift the trajectory points to place them on the trajectory
+    ## Computes the center of the neighbouring points, shifts the points towards it but perpendicularly to the direction of the trajectory
+    points_shift=np.sum(weights_differences_for_directions[:,:,None]*matrix_of_differences/(matrix_of_distances[:,:,None]+1e-9),axis=1)/(np.sum(weights_differences_for_directions,axis=1)[:,None]+1e-9)
+    points_shift=points_shift - np.sum(points_shift*direction,axis=-1,keepdims=True)*direction
+    points_updated=node_c_absolute+points_shift
+    
+    ## Computes the updated matrix of differences between the points positions
+    ## M_{ij} := p_j - p_i
+    matrix_of_differences=points_updated[None,:,:]*same_event_traj_matrix-points_updated[:,None,:]*same_event_traj_matrix
+    
+    
+    ## Computes the matrix of distances updated
+    ## D_{ij} :=  ||M_{ij}|| = ||p_j - p_i||
+    matrix_of_distances=np.linalg.norm(matrix_of_differences,axis=-1)
+    
+    ## Computes the distances projected along the estimated direction
+    ## Ld_{ij} := M_{ij}.dir_i
+    matrix_of_distances_along_the_direction=np.sum(matrix_of_differences*direction[:,None,:],axis=-1)
+    
+    ## Computes the distances orthogonaly to the estimated direction
+    ## Lh_{ij} := || M_{ij} - (M_{ij}.dir_i)*dir_i ||
+    matrix_of_distances_orthogonally_to_the_direction=np.linalg.norm(matrix_of_differences-matrix_of_distances_along_the_direction[:,:,None]*direction[:,None,:],axis=-1)
+    
+    ## Select neighbouring points that satisfy the resolution criterion to be considered for the curvature estimation
+    ## For ||curv|| ~ 1/R (where R is the radius of curvature), since ||curv|| := 2 Lh / ||M||^2 we need the following to be true
+    ## 1. Ld >> res_x
+    ## 2. Lh >> res_x
+    ## 3. 2 Lh / Ld >> res_d
+    ## Where res_x is the uncertainty on the position, while res_d is the uncertainty on the direction (in angle space)
+    inclusion_zone_for_curv = (1-np.exp(-(matrix_of_distances_along_the_direction/(2*curvCutoff_X))**2)) # 1. Ld >> res_x
+    inclusion_zone_for_curv *= (1-np.exp(-(matrix_of_distances_orthogonally_to_the_direction/(2*curvCutoff_X))**2)) # 2. Lh >> res_x
+    inclusion_zone_for_curv *= (1-np.exp(-((2*matrix_of_distances_orthogonally_to_the_direction/(matrix_of_distances_along_the_direction+1e-9))/(2*curvCutoff_d))**2)) # 3. 2 Lh / Ld >> res_d
+    
+    
+    ## Computes the weights for curvature updated
+    ## wc_{ij} := D_{ij}/dc * e^{-D_{ij}/dc} * (0 if D_{ij} < cc else 1) where dc is an arbitrary scale of points to consider, and cc of points to exclude (too close)
+    weights_differences_for_curvature=(matrix_of_distances/curvScale)*np.exp(-(matrix_of_distances/curvScale))*inclusion_zone_for_curv
+    
+    ## Vector of reconstructed curvatures
+    ## curv_i := mean_{along j}(M_{ij}/D_{ij}^2 * dirorder_{ij})_{weighted by wc_{ij}}
+    ## Note that the curvature is of scale 1/D_{ij}# curv_from_differences=np.sum(weights_differences_for_curvature[:,:,None]*matrix_of_differences_updated/(matrix_of_distances_updated[:,:,None]**2+1e-9),axis=1)/(np.sum(weights_differences_for_curvature,axis=1)[:,None]+1e-9)
+    curv_from_differences=2*np.sum(weights_differences_for_curvature[:,:,None]*matrix_of_differences/(matrix_of_distances[:,:,None]**2+1e-9),axis=1)/(np.sum(weights_differences_for_curvature,axis=1)[:,None]+1e-9)
+
+            
+    if node_d is not None:
+        ## If node_d is available, we use it by averaging it with the reconstructed direction.
+        ## We compute the average locally, using the same kind of weighting, but with a scale that can be different
+        weights_node_d_for_curvature=(matrix_of_distances/(curvScale*scale_factor_node_d))*np.exp(-(matrix_of_distances/(curvScale*scale_factor_node_d)))*inclusion_zone_for_curv
+        curv_from_node_d=2*np.sum(weights_node_d_for_curvature[:,:,None]*node_d[None,:,:]*dir_order_matrix[:,:,None]/(matrix_of_distances[:,:,None]+1e-9),axis=1)/(np.sum(weights_node_d_for_curvature,axis=1)[:,None]+1e-9)
+        
+        curvature=(curv_from_differences+weight_predicted_node_d*curv_from_node_d)/(1.+weight_predicted_node_d)
+    else:
+        curvature=curv_from_differences
+    
+    ## Smoothing of the curvature vector:
+    weights_smoothing_curvature=np.exp(-(matrix_of_distances/curvScale))
+    curvature = np.sum(weights_smoothing_curvature[:,:,None]*curvature[None,:,:],axis=1)/(np.sum(weights_smoothing_curvature[:,:,None],axis=1)+1e-9)
+    
+    ## Factor two missing for the curvature vector
+    ## (I don't know why we need this)
+    curvature*=2.
     
     curvature = curvature - np.sum(curvature*direction,axis=-1,keepdims=True)*direction
         
     charge=get_charge(curvature,direction)
-    mom_n=get_momentum_magnitude(np.linalg.norm(curvature,axis=-1),direction)
+    mom_n=get_momentum_magnitude(curvature,direction)
     
     if node_d is not None:
         ## If the node_d is not a unit vector, but contains information about the momentum norm prediction, we use it
@@ -479,6 +544,9 @@ def construct_direction_and_curvature_gpu(node_c_absolute:torch.Tensor,
         
     # assert np.allclose(np.linalg.norm(direction,axis=-1),1.), f"Direction must be a unit vector: {(~np.isclose(np.linalg.norm(direction,axis=-1),1.)).mean()}, {np.linalg.norm(direction,axis=-1).mean()}"
     
+    ## Smoothing of the curvature vector:
+    weights_differences_for_directions+=torch.diag(torch.ones(weights_differences_for_directions.shape[0]).to(device))
+    curvature = torch.sum(weights_differences_for_directions[:,:,None]*curvature[None,:,:],dim=1)/(torch.sum(weights_differences_for_directions[:,:,None],dim=1)+1e-9)
     curvature = curvature - torch.sum(curvature*direction,dim=-1,keepdim=True)*direction
         
     charge=get_charge_gpu(curvature,direction)

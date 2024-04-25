@@ -29,10 +29,10 @@ import torch
 import torch.nn as nn
 from torch.optim import SGD
 
-try:
-    import open3d as o3d
-except ImportError:
-    raise ImportError("Please install open3d with `pip install open3d`.")
+# try:
+#     import open3d as o3d
+# except ImportError:
+#     raise ImportError("Please install open3d with `pip install open3d`.")
 
 import MinkowskiEngine as ME
 from MinkowskiEngine.modules.resnet_block import BasicBlock, Bottleneck

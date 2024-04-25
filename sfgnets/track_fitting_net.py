@@ -20,6 +20,7 @@ y_out_channels=np.sum(PGunEvent.TARGETS_LENGTHS)
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+print(torch.__version__)
 
 #################### TRANSFORMER MODEL #####################
 
