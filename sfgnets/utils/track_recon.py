@@ -1,7 +1,10 @@
 import numpy as np
 import tqdm
 import torch
-from scipy.optimize import curve_fit
+from scipy.optimize import curve_fit, least_squares
+from sklearn.metrics import precision_recall_fscore_support, classification_report
+
+np.set_printoptions(precision=3)
 
 B_FIELD_INTENSITY = 0.2 # magnitude of the B field (supposed to be along X) in Teslas
 C_SPEED_OF_LIGHT = 2.99792e8 # speed of light in m/s
@@ -34,7 +37,7 @@ def sort_event_from_all_results(all_results:dict) -> dict:
     
     if all_results['predictions'].shape[-1]==6:
         ret_dict['node_d']=all_results['predictions'][:,3:6][exclude_not_attributed_hits][indexes]
-        ret_dict['node_d']/=np.linalg.norm(ret_dict['node_d'],axis=-1,keepdims=True)
+        ret_dict['node_d']/=(np.linalg.norm(ret_dict['node_d'],axis=-1,keepdims=True)+1e-9)
     else:
         ret_dict['node_d']=None
     
@@ -43,7 +46,11 @@ def sort_event_from_all_results(all_results:dict) -> dict:
     ret_dict['order_index']=order_index[indexes]
     
     ret_dict['true_node_c_absolute']=(all_results['y'][:,:3]+all_results['c'])[exclude_not_attributed_hits][indexes]
-    ret_dict['true_node_d']=all_results['aux'][:,11:14][exclude_not_attributed_hits][indexes]
+    # ret_dict['true_node_d']=all_results['aux'][:,11:14][exclude_not_attributed_hits][indexes]
+    
+    ret_dict['true_node_d']=all_results['aux'][:,4:7][exclude_not_attributed_hits][indexes]
+    ret_dict['true_node_d']/=(np.linalg.norm( ret_dict['true_node_d'],axis=-1,keepdims=True)+1e-9)
+    
     ret_dict['true_momentum']=all_results['aux'][:,4:7][exclude_not_attributed_hits][indexes]
     ret_dict['true_charge']=all_results['aux'][:,24][exclude_not_attributed_hits][indexes]
     ret_dict['y']=np.concatenate([all_results['y'][:,:3],all_results['aux'][:,4:7]],axis=-1)[exclude_not_attributed_hits][indexes]
@@ -107,11 +114,11 @@ def _handle_single_hit_cases(same_event_traj_matrix:np.ndarray|torch.Tensor,
         if sum_condition:
             if len(same_event_traj_matrix) == 1:
                 if node_d is not None:
-                    return np.array([0.]), DEFAULT_MOM_NORM * node_d, np.array([[0., 0., 0.]]), node_c_absolute
+                    return np.array([0.]), DEFAULT_MOM_NORM * node_d, np.array([[0., 0., 0.]]), node_c_absolute, np.array([0.])
                 else:
-                    return np.array([0.]), DEFAULT_MOM_NORM * np.array([[0., 0., 1.]]), np.array([[0., 0., 0.]]), node_c_absolute
+                    return np.array([0.]), DEFAULT_MOM_NORM * np.array([[0., 0., 1.]]), np.array([[0., 0., 0.]]), node_c_absolute, np.array([0.])
             else:
-                same_event_traj_matrix[(sum_hits < 2)] = 1.0  # use all hits available if the event
+                same_event_traj_matrix[(sum_hits < 2)[...,0]] = 1.0  # use all hits available if the event
                 
     elif isinstance(same_event_traj_matrix, torch.Tensor):
         # PyTorch tensor operations
@@ -121,11 +128,11 @@ def _handle_single_hit_cases(same_event_traj_matrix:np.ndarray|torch.Tensor,
         if sum_condition:
             if same_event_traj_matrix.size(0) == 1:
                 if node_d is not None:
-                    return torch.tensor([0.]), DEFAULT_MOM_NORM * node_d, torch.tensor([[0., 0., 0.]]), node_c_absolute
+                    return torch.tensor([0.]), DEFAULT_MOM_NORM * node_d, torch.tensor([[0., 0., 0.]]), node_c_absolute, torch.tensor([0.])
                 else:
-                    return torch.tensor([0.]), DEFAULT_MOM_NORM * torch.tensor([[0., 0., 1.]]), torch.tensor([[0., 0., 0.]]), node_c_absolute
+                    return torch.tensor([0.]), DEFAULT_MOM_NORM * torch.tensor([[0., 0., 1.]]), torch.tensor([[0., 0., 0.]]), node_c_absolute, torch.tensor([0.])
             else:
-                same_event_traj_matrix[(sum_hits < 2)] = 1.0  # use all hits available if the event
+                same_event_traj_matrix[(sum_hits < 2)[...,0]] = 1.0  # use all hits available if the event
     
 
 def choose_direction_sign(node_c_absolute:np.ndarray|torch.Tensor,
@@ -300,18 +307,28 @@ def _estimate_direction(node_c_absolute:np.ndarray|torch.Tensor,
     dir_from_differences=module_.sum(weights_differences_for_directions[:,:,None]*matrix_of_differences*dir_order_matrix[:,:,None]/(matrix_of_distances[:,:,None]+1e-9),**{list(axis_arg.keys())[0]:1})/(module_.sum(weights_differences_for_directions,**axis_arg)[:,None]+1e-9)
     
         
-    if node_d is not None:
-        ## If node_d is available, we use it by averaging it with the reconstructed direction.
-        ## We compute the average locally, using the same kind of weighting, but with a scale that can be different
+    # if node_d is not None:
+    #     ## If node_d is available, we use it by averaging it with the reconstructed direction.
+    #     ## We compute the average locally, using the same kind of weighting, but with a scale that can be different
         
-        weights_node_d_for_directions=(matrix_of_distances/(dirScale*scale_factor_node_d))*module_.exp(-(matrix_of_distances/(dirScale*scale_factor_node_d)))
+    #     weights_node_d_for_directions=(matrix_of_distances/(dirScale*scale_factor_node_d))*module_.exp(-(matrix_of_distances/(dirScale*scale_factor_node_d)))
         
-        dir_from_node_d=module_.sum(weights_node_d_for_directions[:,:,None]*node_d[None,:,:],**{list(axis_arg.keys())[0]:1})/(module_.sum(weights_node_d_for_directions,**axis_arg)[:,None]+1e-9)
+    #     dir_from_node_d=module_.sum(weights_node_d_for_directions[:,:,None]*node_d[None,:,:],**{list(axis_arg.keys())[0]:1})/(module_.sum(weights_node_d_for_directions,**axis_arg)[:,None]+1e-9)
         
-        direction=(dir_from_differences+weight_predicted_node_d*dir_from_node_d)/(1.+weight_predicted_node_d)
-    else:
-        direction=dir_from_differences
+    #     direrrors = module_.linalg.norm(dir_from_node_d,**axis_arg)
+    #     direrrors = 1.*(module_.abs(direrrors-1.)<1e-2)*module_.isfinite(direrrors)
         
+    #     direction=(dir_from_differences+weight_predicted_node_d*dir_from_node_d*direrrors[:,None])/(1.+weight_predicted_node_d*direrrors.mean())
+    #     assert weight_predicted_node_d==0., f"weight_predicted_node_d is {weight_predicted_node_d}"
+    #     if ((direction-dir_from_differences)**2>1e-5 + ~module_.isfinite(direction)).any():
+    #         print(direrrors.mean())
+    #         print((weight_predicted_node_d*dir_from_node_d*direrrors[:,None]).mean())
+    #         print(f"discordance {((direction-dir_from_differences)**2).mean()}")
+    #         assert False
+    # else:
+    #     direction=dir_from_differences
+        
+    direction=dir_from_differences
     direction/=(module_.linalg.norm(direction,**axis_arg,**keepdim_arg)+1e-9)
     
     return direction, dir_order_matrix
@@ -407,67 +424,35 @@ def _estimate_curvature(node_d:np.ndarray|torch.Tensor|None,
     else:
         raise ValueError("Unsupported data type. Please provide either NumPy array or PyTorch Tensor.")
     
-    
-    weight_predicted_node_d = args_node_d['weight_predicted_node_d']
-    scale_factor_node_d = args_node_d['scale_factor_node_d']
+
     
     curvScale = args_curv['curvScale']
     
-    #### PREVIOUS APPROACH BASED ON SFGRECON MODULE CODE ####
+    ## Computes the weights for getting the average direction after the point
+    ## wda_{ij} := D_{ij}/d * e^{-D_{ij}/d} where d is an arbitrary scale of points to consider
+    ## The kernel is such that close points are avoided and only points at the distance around the scale ~d are considered.
+    ## This allows to get the average direction but quite far away from the point.
+    weight_dir_after_for_curv=(matrix_of_distances/curvScale)*module_.exp(-(matrix_of_distances/curvScale))*(dir_order_matrix>0.)
     
-    curvCutoff_X = args_curv['curvCutoff_X']
-    curvCutoff_d = args_curv['curvCutoff_d']
+    ## Computes the weights for getting the average direction before the point
+    ## wda_{ij} := D_{ij}/d * e^{-D_{ij}/d} where d is an arbitrary scale of points to consider
+    weight_dir_before_for_curv=(matrix_of_distances/curvScale)*module_.exp(-(matrix_of_distances/curvScale))*(dir_order_matrix<0.)
     
-    ## Computes the distances projected along the estimated direction
-    ## Ld_{ij} := M_{ij}.dir_i
-    matrix_of_distances_along_the_direction=module_.sum(matrix_of_differences*direction[:,None,:],**axis_arg)
+    ## Get the average direction after and before the point.
+    other_dir_after=module_.sum(direction[None,:,:]*weight_dir_after_for_curv[:,:,None],**{list(axis_arg.keys())[0]:1})/(module_.sum(weight_dir_after_for_curv,**{list(axis_arg.keys())[0]:1})[:,None]+1e-9)
+    other_dir_before=module_.sum(direction[None,:,:]*weight_dir_before_for_curv[:,:,None],**{list(axis_arg.keys())[0]:1})/(module_.sum(weight_dir_before_for_curv,**{list(axis_arg.keys())[0]:1})[:,None]+1e-9)
     
-    ## Computes the distances orthogonaly to the estimated direction
-    ## Lh_{ij} := || M_{ij} - (M_{ij}.dir_i)*dir_i ||
-    matrix_of_distances_orthogonally_to_the_direction=module_.linalg.norm(matrix_of_differences-matrix_of_distances_along_the_direction[:,:,None]*direction[:,None,:],**axis_arg)
+    ## The distance factor allows to account for the distance between the point and where the other directions are computed.
+    distance_factor=module_.sum(1/(matrix_of_distances+1e-9)*(weight_dir_before_for_curv+weight_dir_after_for_curv),**axis_arg)/(module_.sum(weight_dir_before_for_curv+weight_dir_after_for_curv,**axis_arg)+1e-9)
     
-    ## Select neighbouring points that satisfy the resolution criterion to be considered for the curvature estimation
-    ## For ||curv|| ~ 1/R (where R is the radius of curvature), since ||curv|| := 2 Lh / ||M||^2 we need the following to be true
-    ## 1. Ld >> res_x
-    ## 2. Lh >> res_x
-    ## 3. 2 Lh / Ld >> res_d
-    ## Where res_x is the uncertainty on the position, while res_d is the uncertainty on the direction (in angle space)
-    inclusion_zone_for_curv = (1-module_.exp(-(matrix_of_distances_along_the_direction/(2*curvCutoff_X))**2)) # 1. Ld >> res_x
-    inclusion_zone_for_curv *= (1-module_.exp(-(matrix_of_distances_orthogonally_to_the_direction/(2*curvCutoff_X))**2)) # 2. Lh >> res_x
-    inclusion_zone_for_curv *= (1-module_.exp(-((2*matrix_of_distances_orthogonally_to_the_direction/(matrix_of_distances_along_the_direction+1e-9))/(2*curvCutoff_d))**2)) # 3. 2 Lh / Ld >> res_d
+    ## The curvature is obtained as a cross product between the directions at different points along the trajectory.
+    ## We compute the cross product between the other direction before the point and the direction at the point, and the same for the direction after the point.
+    ## We multiply by the distance factor to get the correct scale for the momentum norm.
+    curvature=-distance_factor[:,None]*(module_.cross(other_dir_before,direction,**axis_arg)+module_.cross(direction,other_dir_after,**axis_arg))/2
     
-    
-    ## Computes the weights for curvature updated
-    ## wc_{ij} := D_{ij}/dc * e^{-D_{ij}/dc} * (0 if D_{ij} < cc else 1) where dc is an arbitrary scale of points to consider, and cc of points to exclude (too close)
-    weights_differences_for_curvature=(matrix_of_distances/curvScale)*module_.exp(-(matrix_of_distances/curvScale))*inclusion_zone_for_curv
-    
-    ## Vector of reconstructed curvatures
-    ## curv_i := mean_{along j}(M_{ij}/D_{ij}^2 * dirorder_{ij})_{weighted by wc_{ij}}
-    ## Note that the curvature is of scale 1/D_{ij}# curv_from_differences=np.sum(weights_differences_for_curvature[:,:,None]*matrix_of_differences_updated/(matrix_of_distances_updated[:,:,None]**2+1e-9),axis=1)/(np.sum(weights_differences_for_curvature,axis=1)[:,None]+1e-9)
-    curv_from_differences=2*module_.sum(weights_differences_for_curvature[:,:,None]*matrix_of_differences/(matrix_of_distances[:,:,None]**2+1e-9),{list(axis_arg.keys())[0]:1})/(module_.sum(weights_differences_for_curvature,{list(axis_arg.keys())[0]:1})[:,None]+1e-9)
-
-            
-    if node_d is not None:
-        ## If node_d is available, we use it by averaging it with the reconstructed direction.
-        ## We compute the average locally, using the same kind of weighting, but with a scale that can be different
-        weights_node_d_for_curvature=(matrix_of_distances/(curvScale*scale_factor_node_d))*module_.exp(-(matrix_of_distances/(curvScale*scale_factor_node_d)))*inclusion_zone_for_curv
-        curv_from_node_d=2*module_.sum(weights_node_d_for_curvature[:,:,None]*node_d[None,:,:]*dir_order_matrix[:,:,None]/(matrix_of_distances[:,:,None]+1e-9),{list(axis_arg.keys())[0]:1})/(module_.sum(weights_node_d_for_curvature,{list(axis_arg.keys())[0]:1})[:,None]+1e-9)
-        
-        curvature=(curv_from_differences+weight_predicted_node_d*curv_from_node_d)/(1.+weight_predicted_node_d)
-    else:
-        curvature=curv_from_differences
-    
-    ## Smoothing of the curvature vector:
-    weights_smoothing_curvature=module_.exp(-(matrix_of_distances/curvScale))
-    curvature = module_.sum(weights_smoothing_curvature[:,:,None]*curvature[None,:,:],{list(axis_arg.keys())[0]:1})/(module_.sum(weights_smoothing_curvature[:,:,None],{list(axis_arg.keys())[0]:1})+1e-9)
-    
-    ## Factor two missing for the curvature vector
-    ## (I don't know why we need this)
-    curvature*=2.
-    
-    
-    ## We make sure that the curvature is orthogonal to the direction vector
-    curvature = curvature - module_.sum(curvature*direction,**axis_arg,**keepdim_arg)*direction
+    ## Now the "curvature" vector is not the curvature, but a vector mostly along the magnetic B field containing the charge and momentum norm information.
+    ## To get back the real curvature that points toward the center of the arc circle, we need to cross product with the direction
+    curvature=module_.cross(direction,curvature,**axis_arg)
     
     return curvature
 
@@ -519,13 +504,17 @@ def trace_ideal_trajectory(s:np.ndarray|torch.Tensor,
     if use_torch:
         points=points.to(device)
     
-    ## Along the X direction, the trajectory is a straight line so we have:    
-    points[:,0]=d_x*s # $x(s)=\bar{d}_{x}s+x_{0}$ 
+    energy_reduction_factor = module_.clip(1 - K/p_0*s,1e-9,None)
+    log_energy_reduction_factor = module_.log(energy_reduction_factor)
+    B_field_factor = q*B_FIELD_INTENSITY*C_SPEED_OF_LIGHT*1e-9
+    circle_factor = 1/(K+1j*B_field_factor+1e-9)
+    x_axis_factor = module_.sqrt(1-d_x**2)
+    initial_angle_factor = module_.exp(1j*theta_0)
+    gyro_energy_factor = B_field_factor/K
+    rotation = module_.exp(1j*gyro_energy_factor*log_energy_reduction_factor)
     
-    ## The following coefficient is in mm
-    coeff_=module_.sqrt(1-d_x**2)/(np.sqrt((K/p_0)**2+(q*B_FIELD_INTENSITY*C_SPEED_OF_LIGHT/p_0*1e-9)**2))
-    # $a(s)=a_{0}+\sqrt{1-\bar{d}_x^2}\frac{1-\left(1-\frac{K}{p_{0}}s\right)e^{i\frac{qB}{K}\log\left(1-\frac{K}{p_{0}}s\right)}}{\sqrt{(\frac{K}{p_{0}})^{2}+(\frac{qB}{p_{0}})^{2}}}e^{-i(\arctan(\frac{qB}{K})-\theta_{0})}$
-    a=coeff_*(1-module_.clip((1-K/p_0*s),1e-9,None)*module_.exp(1j*q*B_FIELD_INTENSITY*C_SPEED_OF_LIGHT/K*1e-9*module_.log(module_.clip((1-K/p_0*s),1e-9,None))))*module_.exp(-1j*(module_.arctan(q*B_FIELD_INTENSITY*C_SPEED_OF_LIGHT/K*1e-9)-theta_0))
+    a = x_axis_factor*initial_angle_factor*p_0*(1-energy_reduction_factor*rotation)*circle_factor
+    
     points[:,1]=module_.real(a)
     points[:,2]=module_.imag(a)
     
@@ -586,7 +575,6 @@ def trace_ideal_direction(s:np.ndarray|torch.Tensor,
 
 
 
-
 def trace_simple_trajectory(s:np.ndarray|torch.Tensor,
                            d_x:float|np.ndarray|torch.Tensor,
                            p_0:float|np.ndarray|torch.Tensor,
@@ -642,7 +630,96 @@ def trace_simple_trajectory(s:np.ndarray|torch.Tensor,
     return points+X_0
 
 
+def jac_ideal_trajectory(s:np.ndarray|torch.Tensor,
+                        d_x:float|np.ndarray|torch.Tensor,
+                        p_0:float|np.ndarray|torch.Tensor,
+                        K:float|np.ndarray|torch.Tensor,
+                        q:float|np.ndarray|torch.Tensor,
+                        theta_0:float|np.ndarray|torch.Tensor,
+                        X_0:np.ndarray|torch.Tensor,)-> np.ndarray|torch.Tensor:
+    
+    """
+    Give the jacobian matrix of the ideal trajectory with respect to the parameters of the ideal trajectory
+    We assume that the stopping power of the material dE/dX is constant of value K over the trajectory (this could be relaxed to include Bethe-Bloch formula).
+    
+    - s : the (signed) distance (in mm) between the predicted point and the reference point
+    - params: the parameters containing the following
+        - d_x : the fraction of the momentum along the x axis (between 0. and 1.)
+        - p_0 : the momentum (in MeV)
+        - K : the stopping power (in MeV/mm)
+        - q : the charge (+1,0,-1)
+        - theta_0 : the angle in the YZ plane of the direction of the momentum at the reference point
+        - x_0 : the offset in the x axis
+        - y_0
+        - z_0
+    
+    Returns:
+    - points : the 3D coordinates of the predicted trajectory
+    """
+    
+    if isinstance(s, np.ndarray):
+        module_=np
+        axis_arg={"axis":-1}
+        keepdim_arg={"keepdims":True}
+        use_torch=False
+        
+    elif isinstance(s, torch.Tensor):
+        module_=torch
+        axis_arg={"dim":-1}
+        keepdim_arg={"keepdim":True}
+        use_torch=True
+        device=s.device
+        
+    else:
+        raise ValueError("Unsupported data type. Please provide either NumPy array or PyTorch Tensor.")
+    
+    
 
+    energy_reduction_factor = module_.clip(1 - K/p_0*s,1e-9,None)
+    log_energy_reduction_factor = module_.log(energy_reduction_factor)
+    B_field_factor = q*B_FIELD_INTENSITY*C_SPEED_OF_LIGHT*1e-9
+    circle_factor = 1/(K+1j*B_field_factor+1e-9)
+    x_axis_factor = module_.sqrt(1-d_x**2)
+    initial_angle_factor = module_.exp(1j*theta_0)
+    gyroradius = B_field_factor/p_0
+    gyro_energy_factor = B_field_factor/K
+    rotation = module_.exp(1j*gyro_energy_factor*log_energy_reduction_factor)
+    
+    default_a = x_axis_factor*initial_angle_factor*p_0*(1-energy_reduction_factor*rotation)*circle_factor
+    
+    jacobian_matrix=module_.zeros(list(s.shape)+[3,7])
+    
+    if use_torch:
+        jacobian_matrix=jacobian_matrix.to(device)
+    
+    jacobian_matrix[...,0,0]=s
+    jacobian_matrix[...,0,1:]=0.
+    
+    d_x_jacobian = -1.*default_a*d_x/(1-d_x**2+1e-9)
+    jacobian_matrix[...,1,0]=module_.real(d_x_jacobian)
+    jacobian_matrix[...,2,0]=module_.imag(d_x_jacobian)
+    
+    p_0_jacobian = x_axis_factor*initial_angle_factor*(1-(1+gyroradius*s)*rotation)*circle_factor
+    jacobian_matrix[...,1,1]=module_.real(p_0_jacobian)
+    jacobian_matrix[...,2,1]=module_.imag(p_0_jacobian)
+    
+    K_jacobian = x_axis_factor*initial_angle_factor*(p_0*(rotation*(2j*gyroradius*s-gyroradius*gyro_energy_factor+1.)-1.)+1j*gyro_energy_factor*p_0/K*energy_reduction_factor*log_energy_reduction_factor*rotation)*circle_factor
+    jacobian_matrix[...,1,2]=module_.real(K_jacobian)
+    jacobian_matrix[...,2,2]=module_.imag(K_jacobian)
+    
+    theta_0_jacobian = 1j*default_a
+    jacobian_matrix[...,1,3]=module_.real(theta_0_jacobian)
+    jacobian_matrix[...,2,3]=module_.imag(theta_0_jacobian)
+    
+    jacobian_matrix[...,0,4]=1.
+    
+    jacobian_matrix[...,1,5]=1.
+    
+    jacobian_matrix[...,2,6]=1.
+    
+    return jacobian_matrix
+    
+    
 
 def _fit_one_traj_with_scipy(s:np.ndarray,
                             X:np.ndarray,
@@ -661,46 +738,58 @@ def _fit_one_traj_with_scipy(s:np.ndarray,
     """
     
     ## Base function for tracing the trajectory based on trace_ideal_trajectory
-    def f_base(s2,d_x,p_0,K_over_p0,q,theta_0,x_0,y_0,z_0):
-        points=trace_ideal_trajectory(s2[0,:],d_x,p_0,K=K_over_p0*p_0,q=q,theta_0=theta_0,X_0=np.array([x_0,y_0,z_0]))
-        return points[np.arange(points.shape[0]),s2[1,:].astype(int)]
+    def f_base(q,d_x,p_0,K_over_p0,theta_0,x_0,y_0,z_0):
+        points=trace_ideal_trajectory(s,d_x,p_0,K=K_over_p0*p_0,q=q,theta_0=theta_0,X_0=np.array([x_0,y_0,z_0]))
+        return X-points
     
-    def fqP(s2,d_x,p_0,K_over_p0,theta_0,x_0,y_0,z_0):
-        return f_base(s2,d_x,p_0,K_over_p0,+1,theta_0,x_0,y_0,z_0)
+    def fqP(x):
+        print(x)
+        return f_base(+1,*x).reshape((-1,))
     
-    def fqN(s2,d_x,p_0,K_over_p0,theta_0,x_0,y_0,z_0):
-        return f_base(s2,d_x,p_0,K_over_p0,-1,theta_0,x_0,y_0,z_0)
+    def fqN(x):
+        return f_base(-1,*x).reshape((-1,))
     
-    def fq0(s2,d_x,p_0,K_over_p0,theta_0,x_0,y_0,z_0):
-        return f_base(s2,d_x,p_0,K_over_p0,0,theta_0,x_0,y_0,z_0)
+    def fq0(x):
+        return f_base(0,*x).reshape((-1,))
     
-    ## Construct the s2 input data, where s2[1] indicates the 3D index (0 for X, 1 for Y, 2 for Z) and s2[0]=s indicated the distance
-    s2=np.zeros(([2,s.shape[0]]))
-    s2[0,:]=s
-    s2=np.concatenate([s2,s2+np.array([[0.],[1.]]),s2+np.array([[0.],[2.]])],axis=1)
     
-    target=np.concatenate([X[:,0],X[:,1],X[:,2]],axis=0)
+    def jac_base(q,d_x,p_0,K_over_p0,theta_0,x_0,y_0,z_0):
+        jacobian=jac_ideal_trajectory(s,d_x,p_0,K=K_over_p0*p_0,q=q,theta_0=theta_0,X_0=np.array([x_0,y_0,z_0]))
+        return jacobian
+    
+    def jac_fqP(x):
+        return jac_base(+1,*x).reshape((-1,7))
+    
+    def jac_fqN(x):
+        return jac_base(-1,*x).reshape((-1,7))
+    
+    def jac_fq0(x):
+        return jac_base(0,*x).reshape((-1,7))
+    
     
     try:
-        params_qP,sigma_qP=curve_fit(fqP,s2,target,p0=guess,bounds=bounds)
-        X_pred_qP=fqP(s2,*params_qP)
-        err_qP=np.mean((target-X_pred_qP)**2)
+        optP=least_squares(fqP,x0=guess,bounds=bounds,jac=jac_fqP)
+        params_qP=optP['x']
+        X_pred_qP=X-f_base(+1,*params_qP)
+        err_qP=np.mean((X-X_pred_qP)**2)
     except RuntimeError as R:
         err_qP=1e9
         print("ERROR qP")
         
     try:
-        params_qN,sigma_qN=curve_fit(fqN,s2,target,p0=guess,bounds=bounds)
-        X_pred_qN=fqN(s2,*params_qN)
-        err_qN=np.mean((target-X_pred_qN)**2)
+        optN=least_squares(fqN,x0=guess,bounds=bounds,jac=jac_fqN)
+        params_qN=optN['x']
+        X_pred_qN=X-f_base(-1,*params_qN)
+        err_qN=np.mean((X-X_pred_qN)**2)
     except RuntimeError as R:
         err_qN=1e9
         print("ERROR qN")
     
     try:
-        params_q0,sigma_q0=curve_fit(fq0,s2,target,p0=guess,bounds=bounds)
-        X_pred_q0=fq0(s2,*params_q0)
-        err_q0=np.mean((target-X_pred_q0)**2)
+        opt0=least_squares(fq0,x0=guess,bounds=bounds,jac=jac_fq0)
+        params_q0=opt0['x']
+        X_pred_q0=X-f_base(0,*params_q0)
+        err_q0=np.mean((X-X_pred_q0)**2)
     except RuntimeError as R:
         err_q0=1e9
         print("ERROR q0")
@@ -709,25 +798,23 @@ def _fit_one_traj_with_scipy(s:np.ndarray,
     if err_qP>1e8 and err_qN>1e8 and err_q0>1e8:
         print("TRIPLE ERROR")
         scale_=np.array(bounds[1]-bounds[0])
-        return guess, scale_[None,:]*scale_[:,None], 1e9, X
+        return guess, 1e9, X
     
     if err_qP<err_qN:
         if err_qP<err_q0:
-            q,params,sigma,err,X_pred=1,params_qP,sigma_qP,err_qP,X_pred_qP
+            q,params,err,X_pred=1,params_qP,err_qP,X_pred_qP
         else:
-            q,params,sigma,err,X_pred=0,params_q0,sigma_q0,err_q0,X_pred_q0
+            q,params,err,X_pred=0,params_q0,err_q0,X_pred_q0
     else:
         if err_qN<err_q0:
-            q,params,sigma,err,X_pred=-1,params_qN,sigma_qN,err_qN,X_pred_qN
+            q,params,err,X_pred=-1,params_qN,err_qN,X_pred_qN
         else:
-            q,params,sigma,err,X_pred=0,params_q0,sigma_q0,err_q0,X_pred_q0
+            q,params,err,X_pred=0,params_q0,err_q0,X_pred_q0
             
     params=[params[0],params[1],params[2]*params[1],q,params[3],np.array([params[4],params[5],params[6]])]
-    X_pred_=np.zeros((s.shape[0],3))
-    X_pred_[:,0]=X_pred[np.arange(X_pred.shape[0])//s.shape[0]==0]
-    X_pred_[:,1]=X_pred[np.arange(X_pred.shape[0])//s.shape[0]==1]
-    X_pred_[:,2]=X_pred[np.arange(X_pred.shape[0])//s.shape[0]==2]
-    return params, sigma, err, X_pred_
+    print(err)
+    print(params)
+    return params, err, X_pred
     
     
 def _fit_local_arc_circle(direction:torch.Tensor,
@@ -862,8 +949,8 @@ def construct_direction_and_curvature(node_c_absolute:np.ndarray|torch.Tensor,
                                      event_id:np.ndarray|torch.Tensor|None=None,
                                      traj_ID:np.ndarray|torch.Tensor|None=None,
                                      args_node_d:dict[str,float]=dict(weight_predicted_node_d=0.,scale_factor_node_d=1.),
-                                     args_dir:dict[str,float]=dict(dirScale=30.),
-                                     args_curv:dict[str,float]=dict(curvScale=100.,curvCutoff_X=4.,curvCutoff_d=0.15,curvScale_d=100.,curvScale_h=50.,p_scale=200.),
+                                     args_dir:dict[str,float]=dict(dirScale=70.),
+                                     args_curv:dict[str,float]=dict(curvScale=300.),
                                      mode:str='order',
                                      chargeID_mode:str='curv_estimate',
                                     **kwargs
@@ -878,6 +965,7 @@ def construct_direction_and_curvature(node_c_absolute:np.ndarray|torch.Tensor,
         keepdim_arg={"keepdims":True}
         use_torch=False
         
+        
     elif isinstance(node_c_absolute, torch.Tensor):
         module_=torch
         axis_arg={"dim":-1}
@@ -889,12 +977,12 @@ def construct_direction_and_curvature(node_c_absolute:np.ndarray|torch.Tensor,
         raise ValueError("Unsupported data type. Please provide either NumPy array or PyTorch Tensor.")
     
     if event_id is None:
-        event_id = module_.zeros(node_c_absolute.shape[0])
+        event_id = module_.zeros((node_c_absolute.shape[0],1))
         if use_torch:
             event_id=event_id.to(device)
     
     if traj_ID is None:
-        traj_ID = module_.zeros(node_c_absolute.shape[0])
+        traj_ID = module_.zeros((node_c_absolute.shape[0],1))
         if use_torch:
             traj_ID=traj_ID.to(device)
         
@@ -913,11 +1001,11 @@ def construct_direction_and_curvature(node_c_absolute:np.ndarray|torch.Tensor,
         
     ## Computes the matrix of differences between the points positions
     ## M_{ij} := p_j - p_i
-    matrix_of_differences=node_c_absolute[None,:,:]*same_event_traj_matrix-node_c_absolute[:,None,:]*same_event_traj_matrix
+    matrix_of_differences = node_c_absolute[None,:,:]*same_event_traj_matrix-node_c_absolute[:,None,:]*same_event_traj_matrix
     
     ## Computes the matrix of distances
     ## D_{ij} :=  ||M_{ij}|| = ||p_j - p_i||
-    matrix_of_distances=module_.linalg.norm(matrix_of_differences,**axis_arg)
+    matrix_of_distances = module_.linalg.norm(matrix_of_differences,**axis_arg)
     
     ## Get the estimated direction and direction order matrix
     ## dir_i and dirorder_{ij}
@@ -929,8 +1017,10 @@ def construct_direction_and_curvature(node_c_absolute:np.ndarray|torch.Tensor,
                                                     args_dir,
                                                     mode,
                                                     )
+    
         
     # assert np.allclose(np.linalg.norm(direction,axis=-1),1.), f"Direction must be a unit vector: {(~np.isclose(np.linalg.norm(direction,axis=-1),1.)).mean()}, {np.linalg.norm(direction,axis=-1).mean()}"
+    point_order_coord = - module_.mean(1.*dir_order_matrix*same_event_traj_matrix[:,:,0],**axis_arg)/module_.mean(1.*same_event_traj_matrix[:,:,0],**axis_arg)
     
     
     if chargeID_mode == "curv_estimate":
@@ -962,6 +1052,40 @@ def construct_direction_and_curvature(node_c_absolute:np.ndarray|torch.Tensor,
         mom_n=get_momentum_magnitude(curvature,direction)
         
         
+    elif chargeID_mode == "simple_curv":
+        
+        k=min(3, max(1, point_order_coord.shape[0]-4))
+        if use_torch:
+            first_points=torch.topk(point_order_coord,k,largest=False,sorted=False,).indices
+            middle_points=torch.topk(torch.abs(point_order_coord),k,largest=False,sorted=False,).indices
+            last_points=torch.topk(-point_order_coord,k,largest=False,sorted=False,).indices
+        else:
+            first_points=np.argpartition(point_order_coord,k)[:k]
+            middle_points=np.argpartition(np.abs(point_order_coord),k)[:k]
+            last_points=np.argpartition(-point_order_coord,k)[:k]
+        
+        beggining_average=node_c_absolute[first_points].mean(**{list(axis_arg.keys())[0]:0})
+        middle_average=node_c_absolute[middle_points].mean(**{list(axis_arg.keys())[0]:0})
+        end_average=node_c_absolute[last_points].mean(**{list(axis_arg.keys())[0]:0})
+        
+        dir_1=middle_average-beggining_average
+        dir_2=end_average-middle_average
+        
+        
+        dir_1/=(module_.linalg.norm(dir_1)**2+1e-9)
+        dir_2/=(module_.linalg.norm(dir_2)**2+1e-9)
+        
+        cross=module_.cross(dir_2,dir_1)
+        charge=module_.sign(cross)[0]*module_.ones_like(event_id)[:,0]
+        avg_dir=direction[middle_points].mean(**{list(axis_arg.keys())[0]:0})
+        curvature=module_.cross(avg_dir,cross)*module_.ones_like(direction)
+        charge=module_.sign(module_.cross(direction,curvature,**axis_arg)[:,0])
+        
+        mom_n=get_momentum_magnitude(curvature,avg_dir)*module_.ones_like(event_id)[:,0]
+        
+        points_updated=node_c_absolute
+        
+        
         
     elif chargeID_mode == "fit_whole_traj":
         ## We fit the whole trajectory to a particle trajectory model and infer the charge and momentum norm from the fit
@@ -970,10 +1094,10 @@ def construct_direction_and_curvature(node_c_absolute:np.ndarray|torch.Tensor,
         reference_point_index=np.argmin(np.abs(np.sum(dir_order_matrix,axis=1)))
         X=matrix_of_differences[reference_point_index]
         s=matrix_of_distances[reference_point_index]*dir_order_matrix[reference_point_index]
-        guess=[0.5,1000.,1e-4,0.,0.,0.,0.]
+        guess=[0.,1000.,1e-4,0.,0.,0.,0.]
         guess[0]=np.mean(direction[...,0])
         guess[3]=np.mean(np.arccos(direction[...,1])*np.sign(direction[...,2]))
-        parameters,sigma,err,points_updated=_fit_one_traj_with_scipy(s,X,guess=guess)
+        parameters,err,points_updated=_fit_one_traj_with_scipy(s,X,guess=guess)
         points_updated+=node_c_absolute[[reference_point_index]]
         direction=trace_ideal_direction(s,*parameters[:-1])
         p_0=parameters[1]
@@ -1014,15 +1138,17 @@ def construct_direction_and_curvature(node_c_absolute:np.ndarray|torch.Tensor,
     else:
         raise ValueError(f"Unsupported chargeID_mode: {chargeID_mode}")
         
-    if node_d is not None:
-        ## If the node_d is not a unit vector, but contains information about the momentum norm prediction, we use it
-        ## To do that, we check that the node_d norm is above 1 MeV for 99% of the cases, if not, it means that node_d are unit vectors
-        if (1.*(node_d_norm>1)).mean()>0.99:
-            weight_predicted_node_d=args_node_d['weight_predicted_node_d']
-            mom_n+=weight_predicted_node_d*node_d_norm
-            mom_n/=(1.+weight_predicted_node_d)
+    # if node_d is not None:
+    #     ## If the node_d is not a unit vector, but contains information about the momentum norm prediction, we use it
+    #     ## To do that, we check that the node_d norm is above 1 MeV for 99% of the cases, if not, it means that node_d are unit vectors
+    #     if (1.*(node_d_norm>1)).mean()>0.99:
+    #         weight_predicted_node_d=args_node_d['weight_predicted_node_d']
+    #         mom_n+=weight_predicted_node_d*node_d_norm
+    #         mom_n/=(1.+weight_predicted_node_d)
     
-    return charge, mom_n[:,None]*direction, curvature, points_updated
+    
+    
+    return charge, mom_n[:,None]*direction, curvature, points_updated, point_order_coord
     
    
 
@@ -1031,13 +1157,15 @@ def charge_and_momentum_fit(ret_dict:dict,
                         values:str='pred',
                         show_progressbar:bool=True,
                         N:int|None=None,
+                        n:int=1,
                         device:torch.device|None=None,
-                        **kwargs):
+                        **kwargs) -> tuple[np.ndarray,np.ndarray,np.ndarray,np.ndarray]:
     
     Charge=[]
     Momentum=[]
     Curvature=[]
     Points_updated=[]
+    Point_order_coord=[]
     
     if device is not None:
         use_torch=True
@@ -1063,11 +1191,12 @@ def charge_and_momentum_fit(ret_dict:dict,
     else:
         raise ValueError(f"Mode {values} not recognized")
     
-    n=1
+    
     N=int(module_.max(ret_dict['event_id']) if N is None else N)
     i=0
+    progress_bar=tqdm.tqdm(range(N//n+1),disable=(not show_progressbar))
     
-    for k in tqdm.tqdm(range(N//n+1),disable=(not show_progressbar)):
+    for k in progress_bar:
         
         j=module_.searchsorted(ret_dict['event_id'][:,0],k*n,side='right')
         if use_torch:
@@ -1079,10 +1208,12 @@ def charge_and_momentum_fit(ret_dict:dict,
         ind=module_.arange(i,j)
         if use_torch:
             ind=ind.to(device)
-            
+        
+        progress_bar.set_postfix({"size":str(j-i)})
+         
         i=j
         
-        charge,mom,curv,points_u=construct_direction_and_curvature(node_c_absolute=node_c_absolute[ind],
+        charge,mom,curv,points_u,p_o_c=construct_direction_and_curvature(node_c_absolute=node_c_absolute[ind],
                                                        node_d=node_d[ind] if node_d is not None else None,
                                                        event_id=ret_dict['event_id'][ind],
                                                        traj_ID=ret_dict['traj_id'][ind],
@@ -1096,18 +1227,21 @@ def charge_and_momentum_fit(ret_dict:dict,
             Momentum.append(mom.detach().cpu().numpy())
             Curvature.append(curv.detach().cpu().numpy())
             Points_updated.append(points_u.detach().cpu().numpy())
+            Point_order_coord.append(p_o_c.detach().cpu().numpy())
             
         else:
             Charge.append(charge.copy())
             Momentum.append(mom.copy())
             Curvature.append(curv.copy())
             Points_updated.append(points_u.copy())
+            Point_order_coord.append(p_o_c.copy())
         
         
     charge=np.concatenate(Charge,axis=0)
     mom=np.concatenate(Momentum,axis=0)
     curv=np.concatenate(Curvature,axis=0)
     points_u=np.concatenate(Points_updated,axis=0)
+    Point_order_coord=np.concatenate(Point_order_coord,axis=0)
     
     if use_torch:
         for key in ret_dict.keys():
@@ -1115,11 +1249,249 @@ def charge_and_momentum_fit(ret_dict:dict,
                 ret_dict[key]=ret_dict[key].detach().cpu().numpy() if ret_dict[key] is not None else None
     
     
-    return charge, mom, curv, points_u
+    return charge, mom, curv, points_u, Point_order_coord
+
+
+
+def update_dict(ret_dict:dict,
+                charge:np.ndarray,
+                momentum:np.ndarray,
+                curvature:np.ndarray,
+                points_updated:np.ndarray,
+                **kwargs) -> dict:
+    
+    ret2={}
+    for key in ret_dict.keys():
+        ret2[key]=ret_dict[key]
+    
+    ret2['charge']=charge
+    ret2['curvature']=curvature
+    ret2['predictions']=np.concatenate([points_updated-ret2['c'],momentum],axis=-1)
+    ret2['node_c_absolute']=points_updated
+    
+    for key in kwargs.keys():
+        ret2[key]=kwargs[key]
+    
+    return ret2
+
+
+
+def group_per_traj(ret_dict_updated:dict,
+                        show_progressbar:bool=True,
+                        N:int|None=None,
+                        null_charge_threshold:float=0.5) -> dict:
+    
+    N=int(np.max(ret_dict_updated['event_id']) if N is None else N)
+    i=0
+    
+    count_of_discarded_traj=0
+    count_of_traj=0
+    
+    ret2={}
+    ret2['charge']=[]
+    ret2['true_charge']=[]
+    ret2['true_momentum_norm']=[]
+    ret2['traj_length']=[]
+    keys=[]
+    for key in ret_dict_updated.keys():
+        if ret_dict_updated[key] is not None and key not in ret2.keys():
+            ret2[key]=[]
+            keys.append(key)
+            
+    
+    for k in tqdm.tqdm(range(N), desc="Event loop", disable=(not show_progressbar)) :
+        j=np.searchsorted(ret_dict_updated['event_id'][:,0],k,side='right')
+        
+        if i==j:
+            continue
+        
+        indexes=np.arange(i,j)
+        i=j
+        
+        Ntraj=int(np.max(ret_dict_updated['traj_id'][indexes,0]))
+        
+        if Ntraj>1:
+            itraj=0
+            for traj_id in range(Ntraj):
+                
+                jtraj=np.searchsorted(ret_dict_updated['traj_id'][indexes,0],traj_id,side='right')
+                if itraj==jtraj:
+                    continue
+                
+                sub_indexes=np.arange(itraj,jtraj)
+                itraj=jtraj
+                
+                
+                true_charge_average=np.mean(ret_dict_updated['true_charge'][indexes][sub_indexes])
+                true_charge=np.round(true_charge_average)
+                
+                if (np.abs(true_charge_average-true_charge)>1e-2).any():
+                    print(f"ERROR: incorrect averaging of the charge for event {k} trajectory {traj_id} with average {true_charge_average}")
+                    count_of_discarded_traj+=1
+                    continue
+                
+                for key in keys:
+                    ret2[key].append(np.mean(ret_dict_updated[key][indexes][sub_indexes],axis=0,keepdims=True))
+                    
+                direction=ret2['predictions'][indexes][sub_indexes][:,3:]
+                direction/=(np.linalg.norm(direction,axis=1,keepdims=True)+1e-9)
+                direction=direction.mean(axis=0)
+                first_point=np.argmin(ret2['point_order_coordinate'][indexes][sub_indexes])
+                last_point=np.argmax(ret2['point_order_coordinate'][indexes][sub_indexes])
+                ret2['traj_length'].append(np.abs(np.sum((ret2['node_c_absolute'][indexes][sub_indexes][last_point]-ret2['node_c_absolute'][indexes][sub_indexes][first_point])*direction)))
+                
+                ret2['true_charge'].append(true_charge)
+                
+                charge_average=np.mean(ret_dict_updated['charge'][indexes][sub_indexes])
+                charge=np.round(charge_average)*(charge_average>null_charge_threshold)
+                
+                ret2['charge'].append(charge)
+                
+                true_momentum_norm=np.mean(np.linalg.norm(ret_dict_updated['true_momentum'][indexes][sub_indexes],axis=-1))
+                
+                ret2['true_momentum_norm'].append(true_momentum_norm)
+                count_of_traj+=1
+        
+        else:
+            
+            
+            true_charge_average=np.mean(ret_dict_updated['true_charge'][indexes])
+            true_charge=np.round(true_charge_average)
+            
+            if (np.abs(true_charge_average-true_charge)>1e-2).any():
+                # print(f"ERROR: incorrect averaging of the charge for event {k} trajectory 0 with average {true_charge_average}")
+                count_of_discarded_traj+=1
+                continue
+            
+            for key in keys:
+                ret2[key].append(np.mean(ret_dict_updated[key][indexes],axis=0,keepdims=True))
+                
+            direction=ret2['predictions'][indexes][:,3:]
+            direction/=(np.linalg.norm(direction,axis=1,keepdims=True)+1e-9)
+            direction=direction.mean(axis=0)
+            first_point=np.argmin(ret2['point_order_coordinate'][indexes])
+            last_point=np.argmax(ret2['point_order_coordinate'][indexes])
+            ret2['traj_length'].append(np.abs(np.sum((ret2['node_c_absolute'][indexes][last_point]-ret2['node_c_absolute'][indexes][first_point])*direction)))
+            
+            ret2['true_charge'].append(true_charge)
+            
+            charge_average=np.mean(ret_dict_updated['charge'][indexes])
+            charge=np.sign(charge_average)*(np.abs(charge_average)>null_charge_threshold)
+            
+            ret2['charge'].append(charge)
+            
+            true_momentum_norm=np.mean(np.linalg.norm(ret_dict_updated['true_momentum'][indexes],axis=-1))
+            
+            ret2['true_momentum_norm'].append(true_momentum_norm)
+            count_of_traj+=1
+            
+        
+    for key in ret2.keys():
+        try:
+            ret2[key]=np.concatenate(ret2[key],axis=0)
+        except ValueError:
+            ret2[key]=np.array(ret2[key])
+        
+    print(f"Number of discarded trajectories: {count_of_discarded_traj} | {100*count_of_discarded_traj/count_of_traj:.2f}%")
+        
+    return ret2
+            
+            
+
+
+def test_dirScale(ret_dict:dict,
+                values:str='from_truth',
+                N:int|None=4999,
+                n:int=1,
+                device:torch.device|None=None,
+                min_dirScale:float=2.,
+                max_dirScale:float=200.,
+                num_points:int=100,
+                **kwargs) -> tuple[np.ndarray,np.ndarray,np.ndarray,np.ndarray]:
+        
+        
+    dirScales = np.linspace(min_dirScale,max_dirScale,num_points)
+    Mean=[]
+    Res=[]
+    Inverted=[]
+    
+    for l in tqdm.tqdm(range(len(dirScales)),desc="Testing the dir scales",leave=True,position=0):
+        
+        dirScale=dirScales[l]
+        
+        
+        charge_pred,mom_pred,curv_pred,points_pred=charge_and_momentum_fit(ret_dict=ret_dict,
+                                                                            values=values,
+                                                                            show_progressbar=False,
+                                                                            N=N,
+                                                                            n=n,
+                                                                            device=device,
+                                                                            args_dir=dict(dirScale=dirScale),
+                                                                            **kwargs)
+        
+        len_=mom_pred.shape[0]
+        true_momentum=ret_dict['true_momentum'][:len_]
+        
+        
+        scalar_prod = np.sum(mom_pred*true_momentum,axis=-1)/(np.linalg.norm(mom_pred,axis=-1)*np.linalg.norm(true_momentum,axis=-1)+1e-6)
+        scalar_prod = np.clip(scalar_prod,-1.,1.)
+        direction_angle = np.arccos(scalar_prod)
+        
+    
+        
+        mean_ = np.mean(direction_angle)
+        res_ = np.quantile(direction_angle,q=0.68)
+        inverted_ = (direction_angle > np.pi/2).mean()
+        
+        Mean.append(mean_)
+        Res.append(res_)
+        Inverted.append(inverted_)
+        
+    return dirScales,np.array(Mean),np.array(Res),np.array(Inverted)
 
 
 
 
+def test_curvScale(ret_dict:dict,
+                values:str='from_truth',
+                N:int|None=4999,
+                n:int=1,
+                device:torch.device|None=None,
+                min_curvScale:float=5.,
+                max_curvScale:float=500.,
+                num_points:int=100,
+                **kwargs) -> tuple[np.ndarray,np.ndarray,np.ndarray,np.ndarray]:
+        
+        
+    curvScales = np.linspace(min_curvScale,max_curvScale,num_points)
+    Prec=[]
+    Rec=[]
+    F1=[]
+    
+    for l in tqdm.tqdm(range(len(curvScales)),desc="Testing the curv scales",leave=True,position=0):
+        
+        curvScale=curvScales[l]
+        
+        
+        charge_pred,mom_pred,curv_pred,points_pred=charge_and_momentum_fit(ret_dict=ret_dict,
+                                                                            values=values,
+                                                                            show_progressbar=False,
+                                                                            N=N,
+                                                                            n=n,
+                                                                            device=device,
+                                                                            args_curv=dict(curvScale=curvScale),
+                                                                            **kwargs)
+        
+        len_=charge_pred.shape[0]
+        prec_,rec_,f1_,_=precision_recall_fscore_support(y_true=np.round(ret_dict['true_charge'][:len_]).astype(int),
+                                         y_pred=np.round(charge_pred).astype(int),
+                                         average='weighted',
+                                         zero_division=0.)
+        Prec.append(prec_)
+        Rec.append(rec_)
+        F1.append(f1_)
+        
+    return curvScales,np.array(Prec),np.array(Rec),np.array(F1)
 
 
 def optimize_smoothing_parameters_gpu(ret_dict:dict,
