@@ -187,7 +187,7 @@ class EventDataset(Dataset, metaclass=ABCMeta):
         del data
         
         # Check that none of the data is None, if it is return None for all variables
-        if return_dict['x'] is None or return_dict['y'] is None or return_dict['c'] is None:
+        if return_dict['x'] is None or return_dict['y'] is None:
             for key in return_dict.key():
                 return_dict[key]=None # then set all variables to None
         
@@ -672,4 +672,34 @@ def select_hits_near_vertex(cut:float=8.,
             raise NotImplementedError(f"The distance type {dist_type} is not implemented for selecting hits near a vertex")
     
     return lambda data: f(data, cut=cut, dist_type=dist_type)
+
+
+
+
+class ChargeIdDataset(EventDataset):
     
+    def __init__(self, 
+                 root:str, 
+                 shuffle:bool=False,
+                 **kwargs):
+        
+        super().__init__(root=root, shuffle=shuffle, **kwargs)
+        self.variables=['x','y','aux', 'event_id', 'traj_id']
+        
+    def getx(self,data:np.lib.npyio.NpzFile):
+        return torch.FloatTensor(data['x'])
+    
+    def gety(self,data:np.lib.npyio.NpzFile):
+        return torch.IntTensor(data['y'])
+
+    def getaux(self,data:np.lib.npyio.NpzFile):
+        return torch.FloatTensor(data['aux'])
+    
+    def getevent_id(self,data:np.lib.npyio.NpzFile):
+        return torch.IntTensor(data['event_id'])
+    
+    def gettraj_id(self,data:np.lib.npyio.NpzFile):
+        return torch.IntTensor(data['traj_id'])
+    
+    def getc(self,data:np.lib.npyio.NpzFile):
+        return None

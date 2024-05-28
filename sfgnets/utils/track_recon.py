@@ -958,7 +958,6 @@ def construct_direction_and_curvature(node_c_absolute:np.ndarray|torch.Tensor,
     
     
     
-    
     if isinstance(node_c_absolute, np.ndarray):
         module_=np
         axis_arg={"axis":-1}
@@ -1194,7 +1193,7 @@ def charge_and_momentum_fit(ret_dict:dict,
     
     N=int(module_.max(ret_dict['event_id']) if N is None else N)
     i=0
-    progress_bar=tqdm.tqdm(range(N//n+1),disable=(not show_progressbar))
+    progress_bar=tqdm.tqdm(range(N//n+2),disable=(not show_progressbar))
     
     for k in progress_bar:
         

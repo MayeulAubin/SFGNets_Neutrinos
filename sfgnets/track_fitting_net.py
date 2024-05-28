@@ -366,22 +366,22 @@ perf_fn=SumPerf.from_SumLoss(loss_fn)
 #################### TRAINING DEFAULT PARAMETERS #####################    
 
 
-baseline_model=create_baseline_model()
-transformer_model=create_transformer_model()
+# baseline_model=create_baseline_model()
+# transformer_model=create_transformer_model()
 
-# Optimizer and schedulers
-lr = 0.01
-optimizer = torch.optim.Adam(baseline_model.parameters(), lr=lr, betas=(0.9, 0.999), eps=1e-9, weight_decay=0.01)
-len_train_loader=120000 # value to set with a real loader
-num_steps_one_cycle = 25
-num_warmup_steps = 10
-cosine_annealing_steps = len_train_loader * num_steps_one_cycle
-lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=cosine_annealing_steps, T_mult=1, eta_min=lr/100)
-warmup_scheduler = WarmUpScheduler(optimizer, lr_scheduler,
-                                   len_loader=1,
-                                   warmup_steps=len_train_loader * num_warmup_steps,
-                                   warmup_start_lr=lr/100,
-                                   warmup_mode='linear')
+# # Optimizer and schedulers
+# lr = 0.01
+# optimizer = torch.optim.Adam(baseline_model.parameters(), lr=lr, betas=(0.9, 0.999), eps=1e-9, weight_decay=0.01)
+# len_train_loader=120000 # value to set with a real loader
+# num_steps_one_cycle = 25
+# num_warmup_steps = 10
+# cosine_annealing_steps = len_train_loader * num_steps_one_cycle
+# lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=cosine_annealing_steps, T_mult=1, eta_min=lr/100)
+# warmup_scheduler = WarmUpScheduler(optimizer, lr_scheduler,
+#                                    len_loader=1,
+#                                    warmup_steps=len_train_loader * num_warmup_steps,
+#                                    warmup_start_lr=lr/100,
+#                                    warmup_mode='linear')
 
 
 
@@ -797,7 +797,7 @@ def test_full(model:torch.nn.Module,
             do_we_consider_coord:bool=False,
             do_we_consider_feat:bool=True,
             do_we_consider_event_id:bool=True,
-            max_batches:int=None,) -> dict[list[np.ndarray]]:
+            max_batches:int|None=None,) -> dict[str, list[np.ndarray]]:
     
     model.eval()
     
