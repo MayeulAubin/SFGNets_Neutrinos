@@ -16,13 +16,8 @@ import torch
 import random
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import Dataset
-from utils import set_random_seed, shift_image, shift_particle, fix_exit_shift, fix_empty_particles
+from ..utils import set_random_seed, shift_image, shift_particle, fix_exit_shift, fix_empty_particles
 
-PID_FROM_PDG = {13:0, # mu-
-                -13:0, # mu+
-                2212:1, # p
-                2112:2, # n
-                }
 
 
 class TransformerDataset(Dataset):
@@ -49,7 +44,7 @@ class TransformerDataset(Dataset):
         lookups = {}
         
         for part in self.particles:
-            with open(config["dataset_metadata"].format(part), "rb"): as fd:
+            with open(config["dataset_metadata"].format(part), "rb") as fd:
                 charges_p, _, _, _, _, lookup_table_p, bin_edges_p = pk.load(fd)
             charges[part] = charges_p
             lookup_table[part] = lookup_table_p
@@ -70,13 +65,15 @@ class TransformerDataset(Dataset):
         self.min_phi = config["min_phi"]  # min phi (in degrees)
         self.max_phi = config["max_phi"]  # max phi (in degrees)
         self.img_size = config["img_size"]  # img_size x img_size x img_size
+        self.origin_point = np.array(config["origin_point"]) # origin point (to center the events)
+        self.PID_FROM_PARTICLE = config["PID_FROM_PARTICLE"] # dictionary to map the particles names to an ID
         
         self.max_add_part = {} # maximum number of additional particles per event
         for part in self.additional_particles:
             self.max_add_part[part] = config[f"max_{part}"]
             
         self.min_charge = config["min_charge"]  # min charge (energy loss) per cube
-        self.max_charge = max([charge_.max() for charge in charges.values()])  # max charge per cube
+        self.max_charge = max([charge_.max() for charge_ in charges.values()])  # max charge per cube
         
         self.min_ini_pos = -self.cube_size - self.cube_size / 2.  # min initial particle 1D position
         self.max_ini_pos = self.cube_size + self.cube_size / 2.  # max initial particle 1D position
@@ -114,7 +111,7 @@ class TransformerDataset(Dataset):
         fix_empty_particles(list(self.add_part_test.values()), np.random)
 
         # Shuffle all the lists (particles starting from the same position (minicube)) in the dictionary
-        for lookup_table_p in self.lookup_table:
+        for lookup_table_p in self.lookup_table.values():
             for key in lookup_table_p:
                 random.shuffle(lookup_table_p[key])
                 
@@ -209,9 +206,15 @@ class TransformerDataset(Dataset):
         # Prepare event
         images, params, lens, muon_exit = [], [], [], []
         for i, particle in enumerate(particles):
-            hits = particle['sparse_image'].astype(int)  # array of shape (Nx5) [points vs (x, y, z, charge, tag)]
-            pos_ini = particle['pos_ini']  # particle initial 3D position
-            pos_fin = particle['pos_fin']  # particle final 3D position
+            ## Shift the coordinates to have the center point at 0 0 0
+            sparse_image = particle['sparse_image']
+            sparse_image = sparse_image[~((sparse_image[:,:3]<self.cube_size*(self.img_size + 2)).prod(axis=-1))]
+            sparse_image = sparse_image[~((-sparse_image[:,:3]<self.cube_size*(self.img_size + 2)).prod(axis=-1))]
+            sparse_image[:,:3] -= self.origin_point[None,:]
+            
+            hits = np.round(sparse_image).astype(int)  # array of shape (Nx5) [points vs (x, y, z, charge, tag)]
+            pos_ini = particle['pos_ini'] - self.origin_point  # particle initial 3D position
+            pos_fin = particle['pos_fin'] - self.origin_point   # particle final 3D position
             length = np.linalg.norm(pos_fin - pos_ini)  # particle length
             ke = particle['ke']  # particle initial kinetic energy
             theta = particle['theta']  # particle initial theta (dir. in spherical coordinates)
@@ -237,14 +240,14 @@ class TransformerDataset(Dataset):
                 ke_exit = particle['ke_exit']
                 theta_exit = particle['theta_exit']
                 phi_exit = particle['phi_exit']
-                pos_exit = particle['pos_exit']
+                pos_exit = particle['pos_exit'] - self.origin_point 
 
                 # Exiting reconstructed on the inner
                 # img_size x img_size x img_size cube VA sub-volume
                 ke_exit_reduce = particle['ke_exit_reduce']
                 theta_exit_reduce = particle['theta_exit_reduce']
                 phi_exit_reduce = particle['phi_exit_reduce']
-                pos_exit_reduce = particle['pos_exit_reduce']
+                pos_exit_reduce = particle['pos_exit_reduce'] - self.origin_point 
 
                 # Adjust the exit point of a muon particle considering a potential random shift
                 pos_exit_target, shift_plane = fix_exit_shift(pos_exit, pos_exit_reduce, shift_x, shift_y, shift_z)
@@ -276,8 +279,8 @@ class TransformerDataset(Dataset):
             
             if parts[i] in self.mu_particles:
                 # Muon case
-                ke = np.interp(ke, (self.min_ke_mu, self.max_ke_mu), self.source_range).reshape(1)
-                ke_exit = np.interp(ke_exit, (self.min_ke_mu, self.max_ke_mu), self.source_range).reshape(1)
+                ke = np.interp(ke, (self.min_ke[part], self.max_ke[part]), self.source_range).reshape(1)
+                ke_exit = np.interp(ke_exit, (self.min_ke[part], self.max_ke[part]), self.source_range).reshape(1)
                 theta_exit = np.interp(theta_exit, (self.min_theta, self.max_theta), self.source_range).reshape(1)
                 phi_exit = np.interp(phi_exit, (self.min_phi, self.max_phi), self.source_range).reshape(1)
                 pos_exit = np.interp(pos_exit_target, (self.min_exit_pos_mu, self.max_exit_pos_mu),
@@ -285,13 +288,13 @@ class TransformerDataset(Dataset):
                 pos_exit /= np.abs(pos_exit).max()  # make sure the exiting position touches the volume
             else:
                 # Other case (proton, deuterium, tritium)
-                ke = np.interp(ke, (self.min_ke_p, self.max_ke_p), self.source_range).reshape(1)
+                ke = np.interp(ke, (self.min_ke[part], self.max_ke[part]), self.source_range).reshape(1)
 
             # Store particle information
             images.append(shifted_image)
             params.append(np.concatenate((pos_ini, ke, theta, phi)))
             lens.append(length)
-            pids.append(PID_FROM_PDG[pdg])
+            pids.append(self.PID_FROM_PARTICLE[part])
 
             del particle
 

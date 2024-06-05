@@ -155,7 +155,7 @@ def fix_empty_particles(counts:list[np.ndarray], np_rand_obj:np.random.RandomSta
     nb_empty = (particles == 0).sum()  # number of empty events (no particles)
     if nb_empty:
         one_hot_fix = np.zeros((len(counts[0]), len(counts)), dtype=int)
-        one_hot_array = np.zeros((nb_empty, 3), dtype=int)
+        one_hot_array = np.zeros((nb_empty, len(counts)), dtype=int)
         one_hot_array[np.arange(nb_empty), np_rand_obj.randint(0, len(counts), size=(nb_empty, 1)).flatten()] = 1
         one_hot_fix[particles == 0] = one_hot_array
         for k,count_ in enumerate(counts):

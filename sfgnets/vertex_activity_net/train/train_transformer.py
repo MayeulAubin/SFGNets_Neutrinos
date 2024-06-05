@@ -28,7 +28,7 @@ def main():
     torch.multiprocessing.set_sharing_strategy('file_system')
 
     # Arguments
-    parser = args_transformer(2)
+    parser = args_transformer()
     args = parser.parse_args()
 
     # Configuration file
