@@ -29,8 +29,8 @@ def args_transformer(version=1):
     parser.add_argument("-el", "--encoder_layers", type=int, default=10, help="number of encoder layers")
     parser.add_argument("-dl", "--decoder_layers", type=int, default=10, help="number of decoder layers")
     parser.add_argument("-a", "--attn_heads", type=int, default=16, help="number of attention heads")
-    parser.add_argument("-b", "--batch_size", type=int, default=512, help="batch_size")
-    parser.add_argument("-e", "--epochs", type=int, default=12420, help="number of epochs")
+    parser.add_argument("-b", "--batch_size", type=int, default=256, help="batch_size")
+    parser.add_argument("-e", "--epochs", type=int, default=100, help="number of epochs")
     parser.add_argument("-w", "--num_workers", type=int, default=32, help="dataloader worker size")
     parser.add_argument("--lr", type=float, default=2e-3, help="learning rate of the optimiser")
     parser.add_argument("-lrd", "--lr_decay", type=float, default=0.9, help="learning rate decay of the scheduler")
@@ -41,6 +41,8 @@ def args_transformer(version=1):
     parser.add_argument("-b2", "--beta2", type=float, default=0.999, help="adam second beta value")
     parser.add_argument("--eps", type=float, default=1e-9, help="value to prevent division by zero")
     parser.add_argument('-ws', '--warmup_steps', type=int, default=20, help='Maximum number of warmup steps')
+    parser.add_argument('-ft', '--fine_tuning', action='store_true', help='Fine tunes a pretrained model (specified in configuration file)')
+    parser.add_argument("-G", "--gpu", type=int, default=1, help="GPU ID (cuda) to be used")
 
     return parser
 

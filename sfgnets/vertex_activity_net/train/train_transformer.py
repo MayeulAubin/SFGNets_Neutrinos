@@ -13,23 +13,25 @@ import torch
 import pytorch_lightning as pl
 
 from torch.utils.data import DataLoader
-from datasets import TransformerDataset
-from models import VATransformer, LightningModelTransformer
-from utils import args_transformer
+from ..datasets import TransformerDataset
+from ..models import VATransformer, LightningModelTransformer
+from ..utils import args_transformer
 from pytorch_lightning.loggers import CSVLogger
 from pytorch_lightning.callbacks import ModelCheckpoint
 
 
 def main():
-    # Manually specify the GPUs to use
-    os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    torch.multiprocessing.set_sharing_strategy('file_system')
-
+    
     # Arguments
     parser = args_transformer()
     args = parser.parse_args()
+    
+    # Manually specify the GPUs to use
+    os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+    os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu)
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    torch.multiprocessing.set_sharing_strategy('file_system')
+
 
     # Configuration file
     with open(args.config_path) as config_file:
@@ -53,7 +55,7 @@ def main():
                              img_size=config["img_size"],
                              tgt_size=config["target_size"],
                              dropout=args.dropout,
-                             max_len=config["max_p"]+config["max_D"]+config["max_T"],
+                             max_len=config["max_p"]+config["max_n"],
                              device=device,
                              )
     
@@ -61,6 +63,11 @@ def main():
     print(model)
     total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print("Total trainable params: {}".format(total_params))
+    
+    if args.fine_tuning:
+        # Fine-tuning
+        print("Fine tuning ...")
+        model.load_state_dict(torch.load(config["checkpoint_path"]))
 
     # Loss functions
     loss_fn1 = torch.nn.MSELoss()  # vertex position
@@ -99,7 +106,7 @@ def main():
         max_epochs=args.epochs,
         callbacks=[checkpoint_callback],
         accelerator="gpu",
-        precision="bf16",
+        # precision="bf16",
         devices=[0],
         logger=logger,
         log_every_n_steps=10,

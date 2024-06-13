@@ -45,7 +45,7 @@ def plotly_generate(image, max_energy=1):
     # Define the cube size
     cube_size = 1
 
-    opacity = np.clip(image / (max_energy * 0.5), 0, 1)
+    opacity = np.clip(image / (max_energy * 0.5+1e-9), 0, 1)
 
     base_cmap = plt.get_cmap('Wistia')
     num_colors = 100
@@ -86,15 +86,15 @@ def plotly_generate(image, max_energy=1):
 
     fig.update_layout(
         scene=dict(
-            xaxis=dict(range=[0, 5],
+            xaxis=dict(range=[0, len(image)],
                        title='X',
                        showticklabels=False,
                        gridcolor="blue", backgroundcolor="#07042F"),
-            yaxis=dict(range=[0, 5],
+            yaxis=dict(range=[0,  len(image)],
                        title='Y',
                        showticklabels=False,
                        gridcolor="blue", backgroundcolor="#07042F"),
-            zaxis=dict(range=[0, 5],
+            zaxis=dict(range=[0,  len(image)],
                        title='Z',
                        showticklabels=False,
                        gridcolor="blue", backgroundcolor="#07042F"),

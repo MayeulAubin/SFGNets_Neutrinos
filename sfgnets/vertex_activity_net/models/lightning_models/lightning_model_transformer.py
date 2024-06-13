@@ -10,7 +10,7 @@ Description: PyTorch Lightning model for the second configuration of the decompo
 import pytorch_lightning as pl
 import torch_optimizer
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
-from utils import create_mask, CustomLambdaLR, CombinedScheduler
+from ...utils import create_mask, CustomLambdaLR, CombinedScheduler
 
 
 # Define the PyTorch Lightning model

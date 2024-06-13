@@ -102,7 +102,7 @@ def shift_particle(particle_pos, shift_x, shift_y, shift_z, cube_size):
     particle_pos[2] += (shift_z * cube_size)
 
 
-def fix_exit_shift(pos_exit, pos_exit_reduce, shift_x, shift_y, shift_z):
+def fix_exit_shift(pos_exit, pos_exit_reduce, shift_x, shift_y, shift_z, VA_region_size):
     """
     Adjust the exit point of a muon particle considering a potential random shift.
 
@@ -118,7 +118,8 @@ def fix_exit_shift(pos_exit, pos_exit_reduce, shift_x, shift_y, shift_z):
         bool: A flag indicating whether a shift was made towards the exit plane.
     """
     # Calculate the plane (x, y, z) the muon is exiting
-    exit_plane = np.argwhere(np.abs(pos_exit) >= 45)[0, 0]
+    exit_plane = np.argmax(np.abs(pos_exit))
+    
     shift = np.array([shift_x, shift_y, shift_z])
 
     # Check whether there's a random shift towards the exiting plane
@@ -329,6 +330,7 @@ def eval_event(event_n, model, test_set, device="cpu"):
 
 
 def rescale(test_set, particle_images, muon_exit, params_true, params_pred, vtx_true, vtx_pred):
+    ## TODO: Include particle type information so that the rescaling is adaptative and not fixed with test_set.max_ke["mu+"] for instance
     """
     Rescale various arrays to their original values using the provided test set's parameters.
 
@@ -348,19 +350,19 @@ def rescale(test_set, particle_images, muon_exit, params_true, params_pred, vtx_
     muon_exit[:3] = np.interp(muon_exit[:3], test_set.source_range,
                               (test_set.min_exit_pos_mu, test_set.max_exit_pos_mu)).reshape(muon_exit[:3].shape)
     muon_exit[3] = np.interp(muon_exit[3], test_set.source_range,
-                             (test_set.min_ke_mu, test_set.max_ke_mu)).reshape(1)
+                             (test_set.min_ke["mu+"], test_set.max_ke["mu+"])).reshape(1)
     muon_exit[4] = np.interp(muon_exit[4], test_set.source_range,
                              (test_set.min_theta, test_set.max_theta)).reshape(1)
     muon_exit[5] = np.interp(muon_exit[5], test_set.source_range,
                              (test_set.min_phi, test_set.max_phi)).reshape(1)
     params_true[:, 0] = np.interp(params_true[:, 0].ravel(), test_set.source_range,
-                                  (test_set.min_ke_p, test_set.max_ke_p)).reshape(params_true[:, 0].shape)
+                                  (test_set.min_ke["p"], test_set.max_ke["p"])).reshape(params_true[:, 0].shape)
     params_true[:, 1] = np.interp(params_true[:, 1].ravel(), test_set.source_range,
                                   (test_set.min_theta, test_set.max_theta)).reshape(params_true[:, 1].shape)
     params_true[:, 2] = np.interp(params_true[:, 2].ravel(), test_set.source_range,
                                   (test_set.min_phi, test_set.max_phi)).reshape(params_true[:, 2].shape)
     params_pred[:, 0] = np.interp(params_pred[:, 0].ravel(), test_set.source_range,
-                                  (test_set.min_ke_p, test_set.max_ke_p)).reshape(params_pred[:, 0].shape)
+                                  (test_set.min_ke["p"], test_set.max_ke["p"])).reshape(params_pred[:, 0].shape)
     params_pred[:, 1] = np.interp(params_pred[:, 1].ravel(), test_set.source_range,
                                   (test_set.min_theta, test_set.max_theta)).reshape(params_pred[:, 1].shape)
     params_pred[:, 2] = np.interp(params_pred[:, 2].ravel(), test_set.source_range,

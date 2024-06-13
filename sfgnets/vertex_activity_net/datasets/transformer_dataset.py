@@ -49,7 +49,8 @@ class TransformerDataset(Dataset):
             charges[part] = charges_p
             lookup_table[part] = lookup_table_p
             bin_edges[part] = bin_edges_p
-            lookups[part] = set(lookup_table_p.keys())
+            # filter out minicubes that have less than 1+max_nb_of_particles, so that we can have at least one particle in training
+            lookups[part] = set(key for key in lookup_table_p.keys() if len(lookup_table_p[key])>1 + (config[f"max_{part}"] if part in self.additional_particles else 1))
         
         # Common indices (minicube indexes) of all particles
         self.indices = list(set(lookup_table_p.keys()).intersection(*lookups.values()))  # indices (keys) of the lookup tables
@@ -87,6 +88,7 @@ class TransformerDataset(Dataset):
         self.cube_shift = config["cube_shift"]  # random shift (in cubes) of the particle position
         self.min_exit_pos_mu = -(self.cube_size * self.img_size) / 2.  # min muon exiting 1D position
         self.max_exit_pos_mu = (self.cube_size * self.img_size) / 2.  # max muon exiting 1D position
+        self.bottom_left = (self.img_size+2*self.cube_shift)//2 # bottom left corner of the VA region 
         
         self.lookup_table = lookup_table
         self.bin_edges = bin_edges  # bin edges for lookup table
@@ -96,6 +98,8 @@ class TransformerDataset(Dataset):
         
         
         self.total_events = len(self.indices)  # total number of different input particle positions
+        # print(f"Number of events considered: {self.total_events}",f"Number of common minicubes: {len(list(set(lookup_table_p.keys()).intersection(*lookup_table.values())))}")
+        print(f"Number of events considered: {self.total_events}")
         self.split = split  # "train", "val", or "test"
         set_random_seed(config["random_seed"], random=random, numpy=np)  # for reproducibility
 
@@ -104,7 +108,9 @@ class TransformerDataset(Dataset):
         self.add_part_test = {}
         for part in self.additional_particles:
             self.add_part_val[part] = np.random.randint(0, self.max_add_part[part] + 1, self.total_events)
-            self.add_part_test[part] = np.random.randint(0, self.max_add_part[part] + 1, self.total_events)
+            # self.add_part_test[part] = np.random.randint(0, self.max_add_part[part] + 1, self.total_events)
+            # to avoid having up to 2*max_nb_part used for testing/validation, but leads to a bit of correlation btw testing and validation datasets
+            self.add_part_test[part] = self.max_add_part[part]-self.add_part_val[part]
 
         # check if val/test event events have 0 particles and fix (add 1 particle to those events)
         fix_empty_particles(list(self.add_part_val.values()), np.random)
@@ -176,20 +182,39 @@ class TransformerDataset(Dataset):
             # Candidates per particle. Make sure there's at least one particle
             nb = {mu:0 for mu in self.mu_particles}
             for part in self.additional_particles:
-                nb[part] = np.random.randint(0, min(self.max_add_part[part] + 1, len(candidates[part])))
+                nb[part] = np.random.randint(0, min(self.max_add_part[part] + 1, len(candidates[part]) + 1))
             # Selectes the muon type
             mu_selected = np.random.randint(0, len(self.mu_particles))
             nb[self.mu_particles[mu_selected]] = 1
-                
-            if sum(nb.values()) == 1:
+            
+            # Make sure that there is at least one additional particle
+            k = 0
+            while sum(nb.values()) == 1:
                 rand_labels = np.random.randint(0, len(self.additional_particles))
-                nb[self.additional_particles[rand_labels]] += 1
+                k+=1
+                # check that the particle has at least a candidate available
+                if len(candidates[self.additional_particles[rand_labels]])>=1:
+                    nb[self.additional_particles[rand_labels]] += 1
+                assert k<10, f"Too many loops while looking for candidates. The number of candidates are: { {part:len(candidates[part]) for part in self.additional_particles} }"
+                
 
             for part in self.particles:
-                candidates[part] = random.sample(candidates[part], nb[part])
+                try:
+                    candidates[part] = random.sample(candidates[part], nb[part])
+                except Exception as E:
+                    print(len(candidates[part]), nb[part], part)
+                    raise E
                 
         else:
             set_random_seed(idx, random=random, numpy=np)  # for reproducibility
+            
+            # Selectes the muon type
+            mu_selected = np.random.randint(0, len(self.mu_particles))
+            for k,part in enumerate(self.mu_particles):
+                if mu_selected != k:
+                    candidates[part] = []
+            
+            
 
         # Retrieve the particle candidates
         particles, parts, pids = [], [], []
@@ -205,12 +230,17 @@ class TransformerDataset(Dataset):
 
         # Prepare event
         images, params, lens, muon_exit = [], [], [], []
+        only_one_muon = True
         for i, particle in enumerate(particles):
             ## Shift the coordinates to have the center point at 0 0 0
             sparse_image = particle['sparse_image']
-            sparse_image = sparse_image[~((sparse_image[:,:3]<self.cube_size*(self.img_size + 2)).prod(axis=-1))]
-            sparse_image = sparse_image[~((-sparse_image[:,:3]<self.cube_size*(self.img_size + 2)).prod(axis=-1))]
             sparse_image[:,:3] -= self.origin_point[None,:]
+            ## Get the coordinates in cubes instead of mm
+            sparse_image[:,:3] /= self.cube_size
+            ## Remove the hits outside of the vertex activity region
+            sparse_image = sparse_image[np.nonzero((np.abs(sparse_image[:,:3])<(self.img_size + 2*self.cube_shift)/2+1e-2).prod(axis=-1))]
+            ## Remove the hits with less than 0.5 of charge (i.e. photo electrons)
+            sparse_image = sparse_image[np.nonzero(sparse_image[:,3]>=0.5)]
             
             hits = np.round(sparse_image).astype(int)  # array of shape (Nx5) [points vs (x, y, z, charge, tag)]
             pos_ini = particle['pos_ini'] - self.origin_point  # particle initial 3D position
@@ -220,13 +250,22 @@ class TransformerDataset(Dataset):
             theta = particle['theta']  # particle initial theta (dir. in spherical coordinates)
             phi = particle['phi']  # particle initial theta (dir. in spherical coordinates)
             pdg = particle['pdg'] # particle PDG
+            
+            # print(f"Particle {parts[i]}: ke: {ke:.1f}  nb hits: {hits.shape[0]}  pos_ini: {pos_ini}")
 
-            assert hits.shape[0] > 0
+            if hits.shape[0] <= 0:
+                # print(f"no hits particle {parts[i]}")
+                continue
+
 
             if parts[i] in self.mu_particles:
                 # Muon case
                 # assert particle['exit']  # all muons must escape
+                assert only_one_muon
+                only_one_muon = False
+                
                 if not particle['exit']:
+                    # print("exit")
                     return {'images': None,
                             'ini_pos': None,
                             'params': None,
@@ -250,7 +289,7 @@ class TransformerDataset(Dataset):
                 pos_exit_reduce = particle['pos_exit_reduce'] - self.origin_point 
 
                 # Adjust the exit point of a muon particle considering a potential random shift
-                pos_exit_target, shift_plane = fix_exit_shift(pos_exit, pos_exit_reduce, shift_x, shift_y, shift_z)
+                pos_exit_target, shift_plane = fix_exit_shift(pos_exit, pos_exit_reduce, shift_x, shift_y, shift_z, (self.img_size + 2*self.cube_shift)*self.cube_size)
                 if not shift_plane:
                     ke_exit = ke_exit_reduce
                     theta_exit = theta_exit_reduce
@@ -258,10 +297,18 @@ class TransformerDataset(Dataset):
 
                 # Shift muon exiting position
                 shift_particle(pos_exit_target, shift_x, shift_y, shift_z, self.cube_size)
-
+                
+            else:
+                # Additional particle case
+                if particle['adjacent_cube']:
+                    # discard additional exiting particles
+                    # print("adjacent cube to the VA region")
+                    continue
+            
             # Reconstruct the image from sparse points to a NxNxN volume
-            dense_image = np.zeros(shape=(self.img_size + 2, self.img_size + 2, self.img_size + 2))
-            dense_image[hits[:, 0], hits[:, 1], hits[:, 2]] = hits[:, 3]
+            dense_image = np.zeros(shape=(self.img_size + 2*self.cube_shift, self.img_size + 2*self.cube_shift, self.img_size + 2*self.cube_shift))
+            dense_image[hits[:, 0] + self.bottom_left, hits[:, 1] + self.bottom_left, hits[:, 2] + self.bottom_left] = hits[:, 3]
+            
 
             # Shift image
             shifted_image = shift_image(dense_image, shift_x, shift_y, shift_z, self.img_size)
@@ -276,29 +323,50 @@ class TransformerDataset(Dataset):
                                 self.source_range).reshape(pos_ini.shape)
             theta = np.interp(theta, (self.min_theta, self.max_theta), self.source_range).reshape(1)
             phi = np.interp(phi, (self.min_phi, self.max_phi), self.source_range).reshape(1)
+            ke = np.interp(ke, (self.min_ke[parts[i]], self.max_ke[parts[i]]), self.source_range).reshape(1)
             
             if parts[i] in self.mu_particles:
                 # Muon case
-                ke = np.interp(ke, (self.min_ke[part], self.max_ke[part]), self.source_range).reshape(1)
-                ke_exit = np.interp(ke_exit, (self.min_ke[part], self.max_ke[part]), self.source_range).reshape(1)
+                ke_exit = np.interp(ke_exit, (self.min_ke[parts[i]], self.max_ke[parts[i]]), self.source_range).reshape(1)
                 theta_exit = np.interp(theta_exit, (self.min_theta, self.max_theta), self.source_range).reshape(1)
                 phi_exit = np.interp(phi_exit, (self.min_phi, self.max_phi), self.source_range).reshape(1)
-                pos_exit = np.interp(pos_exit_target, (self.min_exit_pos_mu, self.max_exit_pos_mu),
-                                     self.source_range).reshape(pos_exit.shape)
+                pos_exit = np.interp(pos_exit_target, (self.min_exit_pos_mu, self.max_exit_pos_mu),self.source_range).reshape(pos_exit.shape)
                 pos_exit /= np.abs(pos_exit).max()  # make sure the exiting position touches the volume
-            else:
-                # Other case (proton, deuterium, tritium)
-                ke = np.interp(ke, (self.min_ke[part], self.max_ke[part]), self.source_range).reshape(1)
 
             # Store particle information
             images.append(shifted_image)
             params.append(np.concatenate((pos_ini, ke, theta, phi)))
             lens.append(length)
-            pids.append(self.PID_FROM_PARTICLE[part])
+            pids.append(self.PID_FROM_PARTICLE[parts[i]])
 
             del particle
 
+        # check that we have one muon
+        # assert not only_one_muon
+        if only_one_muon:
+            # print("no muon")
+            return {'images': None,
+                    'ini_pos': None,
+                    'params': None,
+                    'pids': None,
+                    'exit_muon': None,
+                    'lens': None
+                    }
+        
+        # check that we have at least one particle
         if len(images) == 0:
+            # print("len 0")
+            return {'images': None,
+                    'ini_pos': None,
+                    'params': None,
+                    'pids': None,
+                    'exit_muon': None,
+                    'lens': None
+                    }
+        
+        # check that we have at least two particles
+        if len(images) == 1:
+            # print("len 1")
             return {'images': None,
                     'ini_pos': None,
                     'params': None,
@@ -311,8 +379,7 @@ class TransformerDataset(Dataset):
         images = np.array(images)
         params = np.array(params)
         lens = np.array(lens)
-        pids = np.array(pdgs)  # particle identification
-
+        pids = np.array(pids)  # particle identification
         # Sort additional particles by kinetic energy in descendent order (don't order the muon)
         order = params[1:, 3].argsort()[::-1]
         images[1:] = images[1:][order]
@@ -361,7 +428,7 @@ class TransformerDataset(Dataset):
                 continue
 
             # Aggregate voxels from event particles (inner subvolume)
-            charge_sum = event['images'][:, 1:-1, 1:-1, 1:-1].sum(0)
+            charge_sum = event['images'][:, self.cube_shift:-self.cube_shift, self.cube_shift:-self.cube_shift, self.cube_shift:-self.cube_shift].sum(0)
             indexes = np.where(charge_sum)  # indexes of non-zero values
             charges = charge_sum[indexes].reshape(-1, 1)  # retrieve non-zero charges
             indexes = np.stack(indexes, axis=1)  # retrieve non-zero indexes

@@ -9,7 +9,7 @@
                       },
   "cube_size": 10.27,
   "min_theta": 0,
-  "max_theta": 90,
+  "max_theta": 180,
   "min_phi": 0,
   "max_phi": 360,
   "img_size": 7,
@@ -17,9 +17,9 @@
   "max_n": 5,
   "min_charge": 0,
   "min_ke_p": 0,
-  "max_ke_p": 60,
+  "max_ke_p": 100,
   "min_ke_n": 0,
-  "max_ke_n": 60,
+  "max_ke_n": 100,
   "min_ke_mu+": 0,
   "max_ke_mu+": 2500,
   "min_ke_mu-": 0,
@@ -31,9 +31,9 @@
   "target_size": 3,
   "random_seed": 7,
   "dataset": "/scratch4/maubin/data/pbomb/",
-  "dataset_metadata": "/scratch4/maubin/data/pbomb/data_stats_{}.p",
+  "dataset_metadata": "/scratch4/maubin/data/pbomb/data_stats_filtered_{}.p",
   "pad_value": -2,
   "log_path": "/scratch4/maubin/results/vertex_activity_log",
-  "save_path": "/scratch4/maubin/models/vertex_activity_model_",
-  "checkpoint_path": "/scratch4/maubin/models/vatransformer_weights.pth"
+  "save_path": "/scratch4/maubin/models/vertex_activity_model",
+  "checkpoint_path": "/scratch4/maubin/models/vatransformer_weights_1.pth"
 }
