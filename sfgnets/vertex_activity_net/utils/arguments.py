@@ -20,7 +20,9 @@ def args_transformer(version=1):
     Returns:
         argparse.ArgumentParser: An argument parser with options for configuring the Transformer model.
     """
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(prog='VertexActivityTraining',
+                        description='Trains a model for Vertex Activity analysis',)
+    
     parser.add_argument("-cp", "--config_path", type=str,
                         default="config/decomposing_transformer_v{}.json".format(version),
                         help="path of configuration file")
@@ -35,7 +37,7 @@ def args_transformer(version=1):
     parser.add_argument("--lr", type=float, default=2e-3, help="learning rate of the optimiser")
     parser.add_argument("-lrd", "--lr_decay", type=float, default=0.9, help="learning rate decay of the scheduler")
     parser.add_argument("-ag", "--accum_grad_batches", type=int, default=4, help="batches for gradient accumulation")
-    parser.add_argument("-st", "--scheduler_steps", type=int, default=400, help="scheduler steps in one cycle")
+    parser.add_argument("-st", "--scheduler_steps", type=int, default=200, help="scheduler steps in one cycle")
     parser.add_argument("-wd", "--weight_decay", type=float, default=1e-2, help="weight_decay of the optimiser")
     parser.add_argument("-b1", "--beta1", type=float, default=0.9, help="adam first beta value")
     parser.add_argument("-b2", "--beta2", type=float, default=0.999, help="adam second beta value")
@@ -43,6 +45,8 @@ def args_transformer(version=1):
     parser.add_argument('-ws', '--warmup_steps', type=int, default=20, help='Maximum number of warmup steps')
     parser.add_argument('-ft', '--fine_tuning', action='store_true', help='Fine tunes a pretrained model (specified in configuration file)')
     parser.add_argument("-G", "--gpu", type=int, default=1, help="GPU ID (cuda) to be used")
+    parser.add_argument('-lw','--weights', type=float, nargs=4, default=[1.,1.,1.,1.], help='weights for the loss functions')
+    parser.add_argument('-sw', '--log_weights', action='store_true', help='log the losses weighted')
 
     return parser
 

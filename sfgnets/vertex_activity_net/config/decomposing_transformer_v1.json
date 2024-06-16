@@ -35,5 +35,6 @@
   "pad_value": -2,
   "log_path": "/scratch4/maubin/results/vertex_activity_log",
   "save_path": "/scratch4/maubin/models/vertex_activity_model",
+  "checkpoint_path_b": "/scratch4/maubin/models/vatransformer_v5.pth",
   "checkpoint_path": "/scratch4/maubin/models/vatransformer_weights_1.pth"
 }

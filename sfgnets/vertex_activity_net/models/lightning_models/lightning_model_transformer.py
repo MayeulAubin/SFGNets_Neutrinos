@@ -16,7 +16,8 @@ from ...utils import create_mask, CustomLambdaLR, CombinedScheduler
 # Define the PyTorch Lightning model
 class LightningModelTransformer(pl.LightningModule):
     def __init__(self, model, loss_fn1, loss_fn2, loss_fn3, loss_fn4, pad_value, warmup_steps,
-                 cosine_annealing_steps, lr=1e-4, beta1=0.9, beta2=0.999, weight_decay=0.01, lr_decay=0.9, eps=1e-9):
+                 cosine_annealing_steps, lr=1e-4, beta1=0.9, beta2=0.999, weight_decay=0.01, lr_decay=0.9, eps=1e-9,
+                 loss_weights:list[float]|None = None, log_weighted_loss:bool=False):
         """
         Initialise the Lightning Model for the first configuration of the decomposing transformer.
 
@@ -51,6 +52,14 @@ class LightningModelTransformer(pl.LightningModule):
         self.weight_decay = weight_decay
         self.eps = eps
         self.lr_decay = lr_decay
+        
+        if loss_weights is None:
+            self.loss_weights = [1.0, 1.0, 1.0, 1.0]
+        else:
+            self.loss_weights = loss_weights
+        
+        self.log_weighted_loss = log_weighted_loss
+        
 
     def on_train_start(self):
         """
@@ -106,12 +115,15 @@ class LightningModelTransformer(pl.LightningModule):
         loss2 = self.loss_fn2(params_pred, params_true)
         loss3 = self.loss_fn3(pid_pred, pid_true)
         loss4 = self.loss_fn4(keep_iter_pred, keep_iter_true)
-        loss = loss1 + loss2 + loss3 + loss4
+        loss = self.loss_weights[0]*loss1 + self.loss_weights[1]*loss2 + self.loss_weights[2]*loss3 + self.loss_weights[3]*loss4
 
         # Retrieve current learning rate
         lr = self.optimizers().param_groups[0]['lr']
 
-        return loss1, loss2, loss3, loss4, loss, hits.shape[1], lr
+        if self.log_weighted_loss:
+            return self.loss_weights[0]*loss1, self.loss_weights[1]*loss2, self.loss_weights[2]*loss3, self.loss_weights[3]*loss4, loss, hits.shape[1], lr
+        else: 
+            return loss1, loss2, loss3, loss4, loss, hits.shape[1], lr
 
     def training_step(self, batch, batch_idx):
         """

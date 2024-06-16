@@ -94,6 +94,8 @@ def main():
                                                      pad_value=train_set.pad_value,
                                                      warmup_steps=warmup_steps,
                                                      cosine_annealing_steps=cosine_annealing_steps,
+                                                     loss_weights=args.weights,
+                                                     log_weighted_loss=args.log_weights,
                                                      )
 
     # Define logger and checkpoint
