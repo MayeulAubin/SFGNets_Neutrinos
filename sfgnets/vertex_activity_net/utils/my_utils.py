@@ -9,6 +9,7 @@ Description: Script with auxiliary functions.
 
 import numpy as np
 import torch
+import tqdm
 
 
 def set_random_seed(seed, random=None, numpy=None, torch=None):
@@ -272,6 +273,7 @@ def eval_event(event_n, model, test_set, device="cpu"):
     Returns:
         tuple: A tuple containing the following elements:
             - particle_images (numpy.ndarray): Rescaled particle images.
+            - sfgd_images (list[numpy.ndarray]): Images from the detector for event display.
             - muon_exit (numpy.ndarray): Rescaled muon exit parameters.
             - kin_true (numpy.ndarray): True event kinematic parameters.
             - kin_pred (numpy.ndarray): Predicted event kinematic parameters.
@@ -286,6 +288,7 @@ def eval_event(event_n, model, test_set, device="cpu"):
     # Retrieve event
     event = test_set[event_n]
     muon_exit, kin_true, vtx_true = event['exit_muon'], event['params'], event['ini_pos']
+    sfgd_images = event['sfgd_images']
     event = test_set.collate_fn([event])
     src, muon, vtx_true, tgt, next_tgt, pid_true, _, particle_images = event
     src = src.to(device)
@@ -326,7 +329,7 @@ def eval_event(event_n, model, test_set, device="cpu"):
     # Rescale to original values
     rescale(test_set, particle_images, muon_exit, kin_true, kin_pred, vtx_true, vtx_pred)
 
-    return particle_images, muon_exit, kin_true, kin_pred, pid_true, pid_pred, vtx_true[0], vtx_pred[0]
+    return particle_images, sfgd_images, muon_exit, kin_true, kin_pred, pid_true, pid_pred, vtx_true[0], vtx_pred[0]
 
 
 def rescale(test_set, particle_images, muon_exit, params_true, params_pred, vtx_true, vtx_pred):
@@ -392,3 +395,168 @@ def shift_position(pos, centered_pos, cube_size, test_set):
                        test_set.min_exit_pos_mu,
                        test_set.max_exit_pos_mu)
     return pos
+
+
+
+def analyze_event(model,
+                  test_set,
+                  event_n:int):
+    # Run the decomposing transformer and get particle information
+    _, _, exit_muon, params_true, params_pred, pids_true, pids_pred, vtx_true, vtx_pred = \
+                            eval_event(event_n, model, test_set)
+                            
+    # Extract muon exit information
+    exit_x, exit_y, exit_z, exit_ke, exit_theta, exit_phi = exit_muon
+    
+    ke, theta, phi = params_true[1:,0], params_true[1:,1], params_true[1:,2] # the [1:] is to remove the muon
+    nb_part = len(params_true[1:])
+    nb_pred = len(params_pred)
+    
+    min_nb = min(nb_part,nb_pred)
+    
+    ke_pred, theta_pred, phi_pred = params_pred[:,0], params_pred[:,1], params_pred[:,2]
+    
+    ke_diff = ke[:min_nb]-ke_pred[:min_nb]
+    
+    true_direction = np.zeros((nb_part,3))
+    true_direction[:,0] = np.sin(theta)*np.cos(phi)
+    true_direction[:,1] = np.sin(theta)*np.sin(phi)
+    true_direction[:,2] = np.cos(theta)
+    
+    pred_direction = np.zeros((nb_pred,3))
+    pred_direction[:,0] = np.sin(theta_pred)*np.cos(phi_pred)
+    pred_direction[:,1] = np.sin(theta_pred)*np.sin(phi_pred)
+    pred_direction[:,2] = np.cos(theta_pred)
+    
+    angle_distance = np.arccos(np.sum(true_direction[:min_nb]*pred_direction[:min_nb],axis=-1))
+    
+    vtx_distance = np.linalg.norm(vtx_true-vtx_pred)
+    
+    pid_accuracy = (pids_true[:min_nb] == pids_pred[:min_nb])
+    
+    return {
+            ## True information
+            "ke":ke,
+            "pid":pids_true,
+            "muon_ke":exit_ke,
+            "nb_part":nb_part,
+            
+            ## Performances of the model
+            "ke_diff":ke_diff,
+            "total_ke_diff":np.sum(ke)-np.sum(ke_pred),
+            "angle_distance":angle_distance,
+            "vtx_distance":vtx_distance,
+            "pid_accuracy":pid_accuracy,
+            "nb_pred":nb_pred,
+            
+            "min_nb":min_nb,
+            }
+
+
+
+def analyze_testset(model,
+                    test_set,
+                    N_max:int|None=None,):
+    
+    if N_max is None:
+        N_max = len(test_set)
+    N_max = min(N_max,len(test_set))
+    
+    per_event_analysis = {
+                            ## True information
+                             "muon_ke":[],   
+                             "nb_part":[],
+                             "nb_protons":[],
+                             "nb_neutrons":[],
+                             "total_ke":[],
+                             "total_ke_diff":[],
+                             "ke_protons":[],
+                             "ke_neutrons":[],
+                             
+                             ## Analysis information
+                             "vtx_distance":[],
+                             "nb_pred":[],
+                             "nb_part_diff":[],
+                             "nb_part_abs_diff":[],
+                             "pid_accuracy":[],
+                             "ke_diff_avg":[],
+                             "angle_distance_avg":[],
+                            }
+    
+    
+    
+    per_particle_analysis = {
+                             ## True information
+                             "pid":[],
+                             "ke":[],
+                             "muon_ke":[],   
+                             "nb_part":[],
+                             "nb_protons":[],
+                             "nb_neutrons":[],
+                             "total_ke":[],
+                             "total_ke_diff":[],
+                             
+                             ## Analysis information
+                             "ke_diff":[],
+                             "ke_abs_diff":[],
+                             "angle_distance":[],
+                             "pid_accuracy":[],
+                             "nb_pred":[],
+                             "vtx_distance":[],
+                             }
+    
+    
+    
+    for event_n in tqdm.tqdm(range(N_max), desc="Analyze test set"):
+        
+        analysis_event = analyze_event(model=model,
+                       test_set=test_set,
+                       event_n=event_n)
+        
+        ## True information per event
+        per_event_analysis["muon_ke"].append(analysis_event["muon_ke"])
+        per_event_analysis["nb_part"].append(analysis_event["nb_part"])
+        per_event_analysis["nb_protons"].append(np.sum(analysis_event["pid"]==0))
+        per_event_analysis["nb_neutrons"].append(np.sum(analysis_event["pid"]==1))
+        per_event_analysis["total_ke"].append(np.sum(analysis_event["ke"]))
+        per_event_analysis["total_ke_diff"].append(analysis_event["total_ke_diff"])
+        per_event_analysis["ke_protons"].append(np.sum(analysis_event["ke"]*(analysis_event["pid"]==0)))
+        per_event_analysis["ke_neutrons"].append(np.sum(analysis_event["ke"]*(analysis_event["pid"]==1)))
+        
+        ## Performances per event
+        per_event_analysis["nb_pred"].append(analysis_event["nb_pred"])
+        per_event_analysis["nb_part_diff"].append(analysis_event["nb_part"]-analysis_event["nb_pred"])
+        per_event_analysis["nb_part_abs_diff"].append(np.abs(analysis_event["nb_part"]-analysis_event["nb_pred"]))
+        per_event_analysis["pid_accuracy"].append(np.mean(analysis_event["pid_accuracy"]))
+        per_event_analysis["vtx_distance"].append(analysis_event["vtx_distance"])
+        per_event_analysis["ke_diff_avg"].append(np.mean(np.abs(analysis_event["ke_diff"])))
+        per_event_analysis["angle_distance_avg"].append(np.mean(analysis_event["angle_distance"]))
+        
+        ## True information per particle
+        min_nb = analysis_event["min_nb"]
+        per_particle_analysis["muon_ke"].extend([analysis_event["muon_ke"] for k in range(min_nb)])
+        per_particle_analysis["nb_part"].extend([analysis_event["nb_part"] for k in range(min_nb)])
+        per_particle_analysis["nb_protons"].extend([per_event_analysis["nb_protons"][-1] for k in range(min_nb)])
+        per_particle_analysis["nb_neutrons"].extend([per_event_analysis["nb_neutrons"][-1] for k in range(min_nb)])
+        per_particle_analysis["total_ke"].extend([per_event_analysis["total_ke"][-1] for k in range(min_nb)])
+        per_particle_analysis["total_ke_diff"].extend([per_event_analysis["total_ke_diff"][-1] for k in range(min_nb)])
+        per_particle_analysis["ke"].extend(list(analysis_event["ke"][:min_nb]))
+        per_particle_analysis["pid"].extend(list(analysis_event["pid"][:min_nb]))
+        
+        ## Performances per particle
+        per_particle_analysis["nb_pred"].extend([analysis_event["nb_pred"] for k in range(min_nb)])
+        per_particle_analysis["pid_accuracy"].extend(list(analysis_event["pid_accuracy"]))
+        per_particle_analysis["vtx_distance"].extend([analysis_event["vtx_distance"] for k in range(min_nb)])
+        per_particle_analysis["ke_diff"].extend(list(analysis_event["ke_diff"][:min_nb]))
+        per_particle_analysis["ke_abs_diff"].extend(list(np.abs(analysis_event["ke_diff"][:min_nb])))
+        per_particle_analysis["angle_distance"].extend(list(analysis_event["angle_distance"]))
+        
+        
+    for dict_ in [per_event_analysis,per_particle_analysis]:
+        for key in dict_.keys():
+            dict_[key] = np.array(dict_[key])
+    
+    return per_event_analysis,per_particle_analysis
+    
+        
+        

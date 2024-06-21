@@ -29,7 +29,7 @@ def plotly_event_general(pos3d:np.ndarray|None=None,
                     energies:np.ndarray|None=None,
                     xyz_ranges:list[tuple[float,float]]|np.ndarray=np.array([[-985.92, +985.92],[-257.56, +317.56],[-2888.78, -999.1]]),
                     fig=None,
-                    cmap:str='Wistia',
+                    cmap:str="Wistia",
                     track_color:str="#11a337",
                     title:str="Particles interacting in SFG detector",
                     label:str='Hit',
@@ -41,8 +41,11 @@ def plotly_event_general(pos3d:np.ndarray|None=None,
                     focus:bool=False,
                     momentum:np.ndarray|None=None,
                     cone_scale:float=1.,
+                    darkmode:bool=False,
+                    figsize:tuple[int,int]|None=None,
+                    hit_opacity_factor:float=1.,
                     **kwargs
-                    ):
+                    ) -> go.Figure:
     """
     Generate a 3D plot using Plotly for visualising a voxelised image.
 
@@ -52,6 +55,32 @@ def plotly_event_general(pos3d:np.ndarray|None=None,
         max_energy (float, optional): The maximum energy value for color scaling. Default is 1.
         cube_size (float, optional): The size of the cube in the plot. Default is 1.
     """
+    
+    if figsize is None:
+        ## Figure size
+        # full screen
+        width, height = 1500, 800  # Adjust these values as needed
+        # small screen
+        width, height = 1000, 562  # Adjust these values as needed
+    else:
+        width, height = figsize
+        
+    
+    if darkmode:
+        ## Blue theme
+        gridcolor='blue'
+        backgroundcolor="#07042F"
+        legend_color="white"
+        paper_bgcolor='rgba(0, 0, 0, 0)'
+        plot_bgcolor='rgba(0, 0, 0, 0)'
+    else:
+        ## White theme
+        gridcolor='#505050'
+        backgroundcolor="#ececec"
+        legend_color="black"
+        paper_bgcolor='rgba(255, 255, 255, 255)'
+        plot_bgcolor='rgba(255, 255, 255, 255)'
+    
     
     
     if image is not None:
@@ -137,7 +166,7 @@ def plotly_event_general(pos3d:np.ndarray|None=None,
                 k=[0, 7, 2, 3, 6, 7, 1, 1, 5, 5, 7, 6],
                 color=cl,
                 flatshading=True,
-                opacity=op,
+                opacity=np.clip(op*hit_opacity_factor,0.,1.),
                 legendgroup=label,
                 name=name,
                 showlegend=(j==0),
@@ -262,7 +291,7 @@ def plotly_event_general(pos3d:np.ndarray|None=None,
                                         )
                     fig.add_trace(trk)
                     
-                fig.update_layout(legend2={"title":track_label[k]})
+                fig.update_layout(legend2={"title":track_label[k],"yanchor":"bottom","xanchor":"right"})
                     
                 # trk=go.Scatter3d(x=t[np.isin(track_pdg_[k],pdgs_of_interest,invert=True),0],y=t[np.isin(track_pdg_[k],pdgs_of_interest,invert=True),1],z=t[np.isin(track_pdg_[k],pdgs_of_interest,invert=True),2],
                 #                     mode="markers", # can be changed to "lines+markers" to include lines connecting points
@@ -281,7 +310,6 @@ def plotly_event_general(pos3d:np.ndarray|None=None,
     fig.update_layout(margin=dict(l=0, r=0, t=0, b=0))
 
     # Set the image size based on the aspect ratio
-    width, height = 1500, 800  # Adjust these values as needed
     fig.update_layout(width=width, height=height,title=title)
 
     fig.update_layout(
@@ -289,27 +317,33 @@ def plotly_event_general(pos3d:np.ndarray|None=None,
             xaxis=dict(range=xyz_ranges[0],
                        title='X',
                        showticklabels=True,
-                       gridcolor="blue", backgroundcolor="#07042F"),
+                       gridcolor=gridcolor, backgroundcolor=backgroundcolor),
             yaxis=dict(range=xyz_ranges[1],
                        title='Y',
                        showticklabels=True,
-                       gridcolor="blue", backgroundcolor="#07042F"),
+                       gridcolor=gridcolor, backgroundcolor=backgroundcolor),
             zaxis=dict(range=xyz_ranges[2],
                        title='Z',
                        showticklabels=True,
-                       gridcolor="blue", backgroundcolor="#07042F"),
+                       gridcolor=gridcolor, backgroundcolor=backgroundcolor),
         )
     )
     
     # Set the aspect ratio to be equal
+    aspect_ratio_x = 1
+    aspect_ratio_y = (xyz_ranges[1][1]-xyz_ranges[1][0])/(xyz_ranges[0][1]-xyz_ranges[0][0])
+    aspect_ratio_z = (xyz_ranges[2][1]-xyz_ranges[2][0])/(xyz_ranges[0][1]-xyz_ranges[0][0])
+    aspect_ratio = np.array([aspect_ratio_x,aspect_ratio_y,aspect_ratio_z])
+    
     fig.update_layout(scene=dict(aspectmode='manual',
-                  aspectratio=dict(x=1, y=(xyz_ranges[1][1]-xyz_ranges[1][0])/(xyz_ranges[0][1]-xyz_ranges[0][0]), z=(xyz_ranges[2][1]-xyz_ranges[2][0])/(xyz_ranges[0][1]-xyz_ranges[0][0]))))
+                  aspectratio=dict(x=aspect_ratio_x, y=aspect_ratio_y, z=aspect_ratio_z)))
 
     # Set the camera parameters for initial zoom
     eye= dict(x=0., y=0.1, z=0.) if focus else dict(x=0., y=1., z=0.)
     if vertex is not None and center:
         # _eye=np.array([eye['x'],eye['y'],eye['z']])
-        _center= (vertex[:,0]-np.mean(xyz_ranges,axis=1))/(xyz_ranges[:,1]-xyz_ranges[:,0])/2
+        _center = (vertex[:,0]-np.mean(xyz_ranges,axis=1))/(xyz_ranges[:,1]-xyz_ranges[:,0])*aspect_ratio
+        # _center = vertex[:,0]
         _center = dict(x=_center[0],y=_center[1],z=_center[2])
         # print(center)
         # center= dict(x=0, y=0.2, z=-0.3)
@@ -324,8 +358,8 @@ def plotly_event_general(pos3d:np.ndarray|None=None,
         )
     )
 
-    fig.update_layout(paper_bgcolor='rgba(0, 0, 0, 0)', plot_bgcolor='rgba(0, 0, 0, 0)')
-    fig.update_layout(legend=dict(font=dict(color="white"),orientation="h"))
+    fig.update_layout(paper_bgcolor=paper_bgcolor, plot_bgcolor=plot_bgcolor)
+    fig.update_layout(legend=dict(font=dict(color=legend_color),orientation="h"))
 
     return fig
 

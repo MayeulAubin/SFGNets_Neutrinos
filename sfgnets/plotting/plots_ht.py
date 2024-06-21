@@ -681,6 +681,7 @@ def plot_event_display(data:DataContainer|tuple[dict,SparseEvent],
                             cmaps=["autumn","copper","summer"],
                             fig=fig,
                             vertex=verPos[:,None],
+                            center=True,
                             )
     
     if savefig_path is not None:
@@ -688,6 +689,11 @@ def plot_event_display(data:DataContainer|tuple[dict,SparseEvent],
         
     if show:
         fig.show()
+    
+    print(f"Interaction type: {reaction_codes_short_labels_dict[int(np.abs(data.all_results['aux'][i][0,1]))] if int(np.abs(data.all_results['aux'][i][0,1])) in reaction_codes_short_labels_dict.keys() else 'other'}")
+    pdgs, counts = np.unique(data.all_results['aux'][i][:,0], return_counts=True)
+    ind = np.argsort(-counts)
+    print(f"Particles involved with number of hits: "+"   ".join([f"{particle.Particle.from_pdgid(int(pdg)).name if pdg!=0 else 'pdg 0' }: {c}" for pdg,c in zip(pdgs[ind],counts[ind])]))
         
     return fig
 

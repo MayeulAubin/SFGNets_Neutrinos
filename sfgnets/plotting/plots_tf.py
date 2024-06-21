@@ -14,6 +14,18 @@ import particle
 from sfgnets.plotting.plot_3D_events import plotly_event_nodes as _plotly_event_nodes
 from sfgnets.plotting.plot_3D_events import plotly_event_general as _plotly_event_general
 
+
+## Custom font
+import matplotlib.font_manager as font_manager
+
+font_path = '/scratch4/maubin/plots/font/Montserrat-Regular.ttf'  # Your font path goes here
+font_manager.fontManager.addfont(font_path)
+prop = font_manager.FontProperties(fname=font_path)
+
+plt.rcParams['font.family'] = 'sans-serif'
+plt.rcParams['font.sans-serif'] = prop.get_name()
+
+
 # plt.rcParams['text.usetex'] = True
 
 target_names = ["Vertex activity", "Single P", "Noise"]
@@ -22,7 +34,7 @@ x_lim_dist=(0.,40.) if use_log_scale else (0.5,40.)
 x_lim_dist_m=(0.,3500.) if use_log_scale else (0.,3500.)
 # x_lim_dist=(0.5,80) if use_log_scale else (0.5,80)
 x_lim_charge=(0.5,2000) if use_log_scale else (0.5, 300)
-delfault_dpi=200
+delfault_dpi=300
 Nbins=1000
 y_log_scale=True
 

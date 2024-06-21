@@ -229,7 +229,7 @@ class TransformerDataset(Dataset):
         shift_x, shift_y, shift_z = np.random.randint(-self.cube_shift, self.cube_shift + 1, 3)
 
         # Prepare event
-        images, params, lens, muon_exit = [], [], [], []
+        images, params, lens, muon_exit, sfgd_images = [], [], [], [], []
         only_one_muon = True
         for i, particle in enumerate(particles):
             ## Shift the coordinates to have the center point at 0 0 0
@@ -271,7 +271,8 @@ class TransformerDataset(Dataset):
                             'params': None,
                             'pids': None,
                             'exit_muon': None,
-                            'lens': None
+                            'lens': None,
+                            'sfgd_images':None
                             }
 
                 # Exiting reconstructed kinematics on outer
@@ -299,8 +300,14 @@ class TransformerDataset(Dataset):
                 shift_particle(pos_exit_target, shift_x, shift_y, shift_z, self.cube_size)
                 
             else:
-                # Additional particle case
-                if particle['adjacent_cube']:
+                ## Additional particle case
+                
+                # if particle['adjacent_cube']:
+                #     # discard additional exiting particles
+                #     # print("adjacent cube to the VA region")
+                #     continue
+                
+                if particle['exit']:
                     # discard additional exiting particles
                     # print("adjacent cube to the VA region")
                     continue
@@ -338,6 +345,7 @@ class TransformerDataset(Dataset):
             params.append(np.concatenate((pos_ini, ke, theta, phi)))
             lens.append(length)
             pids.append(self.PID_FROM_PARTICLE[parts[i]])
+            sfgd_images.append(particle['sparse_image'].copy())
 
             del particle
 
@@ -350,7 +358,8 @@ class TransformerDataset(Dataset):
                     'params': None,
                     'pids': None,
                     'exit_muon': None,
-                    'lens': None
+                    'lens': None,
+                    'sfgd_images':None
                     }
         
         # check that we have at least one particle
@@ -361,7 +370,8 @@ class TransformerDataset(Dataset):
                     'params': None,
                     'pids': None,
                     'exit_muon': None,
-                    'lens': None
+                    'lens': None,
+                    'sfgd_images':None
                     }
         
         # check that we have at least two particles
@@ -372,7 +382,8 @@ class TransformerDataset(Dataset):
                     'params': None,
                     'pids': None,
                     'exit_muon': None,
-                    'lens': None
+                    'lens': None,
+                    'sfgd_images':None
                     }
 
         # Lists to numpy arrays
@@ -397,6 +408,7 @@ class TransformerDataset(Dataset):
                  'pids': pids,  # particle type (defined with PID_FROM_PDG)
                  'exit_muon': exit_muon,  # exiting point, KE, theta, phi
                  'lens': lens,
+                'sfgd_images':sfgd_images # sparse images for event display
                  }
 
         return event

@@ -1,11 +1,35 @@
 import pandas as pd
-import plotly.express as px
 from plotly.subplots import make_subplots
 import plotly.graph_objects as go
 from dash import Dash, dcc, html, Input, Output
 import pickle as pk
 import numpy as np
 import argparse
+
+
+# Define the replacements of columns names as a dictionary
+replacements = {
+    '_': ' ',
+    'nb': 'Number',
+    'ke': 'Kinetic Energy',
+    'vtx': 'Vertex',
+    'diff': 'difference',
+    'part': 'particles',
+    'abs': 'absolute',
+}
+
+
+# Function to replace and capitalize column names
+def replace_and_capitalize_columns(df, replacements):
+    def replace_and_capitalize(name):
+        for old, new in replacements.items():
+            name = name.replace(old, new)
+        return ' '.join(word.capitalize() for word in name.split())
+
+    # Apply the function to each column name
+    map_ = {col:replace_and_capitalize(col) for col in df.columns}
+
+    return map_
 
 
 
@@ -17,13 +41,19 @@ if __name__ == '__main__':
     parser.add_argument('-p', '--per_particle', action='store_true', help='analysis per particle instead of per event')
     args = parser.parse_args()
     
-    with open("/scratch4/maubin/results/vatransformer_v5_analysis.pk","rb") as f:
+    with open("/scratch4/maubin/results/vatransformer_v8_analysis.pk","rb") as f:
         (per_event_analysis,per_particle_analysis)=pk.load(f)
 
     if args.per_particle:
         df_pandas = pd.DataFrame(per_particle_analysis)
     else:
         df_pandas = pd.DataFrame(per_event_analysis)
+        
+    # Apply the function to the DataFrame
+    columns_map = replace_and_capitalize_columns(df_pandas, replacements)
+
+    # Get the number of entries
+    dataset_size = len(df_pandas)
 
 
     # Create a list of columns for dropdown options
@@ -115,17 +145,17 @@ if __name__ == '__main__':
 
                 # Variable Selection for Subplots
                 html.Div([
-                    html.Label("Select Variable for the histogram:", style={'color': 'white'}),
+                    html.Label("Select Variable for the histogram:", style={'color': '#0090d2'}),
                     dcc.Dropdown(
                         id='var1',
-                        options=[{'label': col, 'value': col} for col in columns if col not in ['Y', 'Z']],
+                        options=[{'label': columns_map[col], 'value': col} for col in columns if col not in ['Y', 'Z']],
                         value='X1',
                         style={'backgroundColor': '#444', 'borderColor': '#555'}
                     ),
-                    html.Label("Select Variable for the line plot:", style={'color': 'white'}),
+                    html.Label("Select Variable for the line plot:", style={'color': '#ffa600'}),
                     dcc.Dropdown(
                         id='var1b',
-                        options=[{'label': col, 'value': col} for col in columns if col not in ['Y', 'Z']],
+                        options=[{'label': columns_map[col], 'value': col} for col in columns if col not in ['Y', 'Z']],
                         value='X1b',
                         style={'backgroundColor': '#444', 'borderColor': '#555'}
                     ),
@@ -206,35 +236,35 @@ if __name__ == '__main__':
                 std_val = df_column.std()
                 return mean_val, median_val, std_val
 
-            def add_annotations(fig, stats, row):
+            def add_annotations(fig, stats, row, data_size):
                 mean_val, median_val, std_val = stats
                 annotations = [
                     dict(
                         xref=f'x{row}', yref=f'y{row}',
                         x=0.5, y=0.95, xanchor='left', yanchor='top',
-                        text=f"<b>Mean:</b> {mean_val:.2f}, <b>Median:</b> {median_val:.2f}, <b>Std:</b> {std_val:.2f}",
+                        text=f"<b>Mean:</b> {mean_val:.2f}, <b>Median:</b> {median_val:.2f}, <b>Std:</b> {std_val:.2f}, <b>Data selected:</b> {100*data_size/dataset_size:.2f}%",
                         showarrow=False,
                         font=dict(size=12, color="white")
-                    )
+                    ),
                 ]
                 fig.add_annotation(annotations[0])
 
             # Add histogram and statistics for var1
             fig.add_trace(
-                go.Histogram(x=filtered_df[var1], nbinsx=num_bins, name=var1, marker_color='blue'),
+                go.Histogram(x=filtered_df[var1], nbinsx=num_bins, name=columns_map[var1], marker_color='#005379'),
                 # row=1, col=1
             )
             stats_var1 = get_statistics(filtered_df[var1])
-            add_annotations(fig, stats_var1, 1)
+            add_annotations(fig, stats_var1, 1, len(filtered_df))
             
             # Update layout to add axis labels and adjust layout
             fig.update_layout(
-                title=f'Distribution of {var1}',
-                xaxis_title=var1,
+                title=f'Distribution of {columns_map[var1]}',
+                xaxis_title=columns_map[var1],
                 yaxis=dict(
-                    title=f'{var1} Distribution',
-                    titlefont=dict(color='blue'),
-                    tickfont=dict(color='blue')
+                    title=f'{columns_map[var1]} Distribution',
+                    titlefont=dict(color='#0090d2'),
+                    tickfont=dict(color='#0090d2')
                 ),
             )
             
@@ -257,9 +287,8 @@ if __name__ == '__main__':
 
                 # Calculate bin centers for the x-axis
                 bin_centers = (bins[:-1] + bins[1:]) / 2
+                bin_centers = bin_centers[np.clip(np.array(bin_means.index),0,num_bins-1)]
                 
-                # Filter out bins that are not represented in the data
-                bin_centers = bin_centers[:len(bin_means)]
                 
                 # Add mean and standard deviation for var2 per bin
                 fig.add_trace(
@@ -267,8 +296,8 @@ if __name__ == '__main__':
                         x=bin_centers, 
                         y=bin_means, 
                         error_y=dict(type='data', array=bin_stds),
-                        name=f'{var1b} Mean ± Std Dev',
-                        marker_color='orange',
+                        name=f'{columns_map[var1b]} Mean ± Std Dev',
+                        marker_color='#ffa600',
                         yaxis='y2',
                         mode='lines+markers'
                     )
@@ -276,11 +305,11 @@ if __name__ == '__main__':
                 
                 # Update layout to add axis labels and adjust layout
                 fig.update_layout(
-                    title=f'Distribution of {var1} and Mean ± Std Dev of {var1b}',
+                    title=f'Distribution of {columns_map[var1]} and Mean ± Std Dev of {columns_map[var1b]}',
                     yaxis2=dict(
-                        title=f'{var1b} Mean ± Std Dev',
-                        titlefont=dict(color='orange'),
-                        tickfont=dict(color='orange'),
+                        title=f'{columns_map[var1b]} Mean ± Std Dev',
+                        titlefont=dict(color='#ffa600'),
+                        tickfont=dict(color='#ffa600'),
                         overlaying='y',
                         side='right'
                     ),
