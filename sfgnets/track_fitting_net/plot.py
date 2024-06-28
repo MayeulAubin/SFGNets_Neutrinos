@@ -7,23 +7,23 @@ import pickle as pk
 import tqdm
 import numpy as np
 import matplotlib.pyplot as plt
-from sfgnets.dataset import PGunEvent, RANGES, CUBE_SIZE
+from .dataset import PGunEvent, RANGES, CUBE_SIZE
 import corner
 import matplotlib
 import particle
-from sfgnets.plotting.plot_3D_events import plotly_event_nodes as _plotly_event_nodes
-from sfgnets.plotting.plot_3D_events import plotly_event_general as _plotly_event_general
+from ..utils.plot_3D_events import plotly_event_nodes as _plotly_event_nodes
+from ..utils.plot_3D_events import plotly_event_general as _plotly_event_general
 
 
-## Custom font
-import matplotlib.font_manager as font_manager
+# ## Custom font
+# import matplotlib.font_manager as font_manager
 
-font_path = '/scratch4/maubin/plots/font/Montserrat-Regular.ttf'  # Your font path goes here
-font_manager.fontManager.addfont(font_path)
-prop = font_manager.FontProperties(fname=font_path)
+# font_path = '/scratch4/maubin/plots/font/Montserrat-Regular.ttf'  # Your font path goes here
+# font_manager.fontManager.addfont(font_path)
+# prop = font_manager.FontProperties(fname=font_path)
 
-plt.rcParams['font.family'] = 'sans-serif'
-plt.rcParams['font.sans-serif'] = prop.get_name()
+# plt.rcParams['font.family'] = 'sans-serif'
+# plt.rcParams['font.sans-serif'] = prop.get_name()
 
 
 # plt.rcParams['text.usetex'] = True

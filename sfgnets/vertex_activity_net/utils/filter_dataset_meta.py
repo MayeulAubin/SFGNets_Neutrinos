@@ -31,7 +31,10 @@ def check_event(event_file,
     
     ## Check if additional particles don't have adjacent cubes
     else:
-        if event_file["adjacent_cube"]:
+        # if event_file["adjacent_cube"]:
+        #     return False
+        
+        if event_file["exit"]:
             return False
     
     return True

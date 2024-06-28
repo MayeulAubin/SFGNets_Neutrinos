@@ -16,11 +16,13 @@ replacements = {
     'diff': 'difference',
     'part': 'particles',
     'abs': 'absolute',
+    'res': 'resolution',
 }
 
 
 # Function to replace and capitalize column names
 def replace_and_capitalize_columns(df, replacements):
+    
     def replace_and_capitalize(name):
         for old, new in replacements.items():
             name = name.replace(old, new)
@@ -41,7 +43,7 @@ if __name__ == '__main__':
     parser.add_argument('-p', '--per_particle', action='store_true', help='analysis per particle instead of per event')
     args = parser.parse_args()
     
-    with open("/scratch4/maubin/results/vatransformer_v8_analysis.pk","rb") as f:
+    with open("/scratch4/maubin/results/vatransformer_v9_analysis.pk","rb") as f:
         (per_event_analysis,per_particle_analysis)=pk.load(f)
 
     if args.per_particle:

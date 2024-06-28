@@ -2,13 +2,43 @@ import numpy as np
 import torch
 import time
 
-from sfgnets.utils import track_recon
-from sfgnets import track_fitting_net
-from sfgnets.dataset import *
+from .utils import track_recon
+from .. import track_fitting_net
+from ..datasets import *
 from sklearn.metrics import classification_report
 
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+
+
+class ChargeIdDataset(EventDataset):
+    
+    def __init__(self, 
+                 root:str, 
+                 shuffle:bool=False,
+                 **kwargs):
+        
+        super().__init__(root=root, shuffle=shuffle, **kwargs)
+        self.variables=['x','y','aux', 'event_id', 'traj_id']
+        
+    def getx(self,data:np.lib.npyio.NpzFile):
+        return torch.FloatTensor(data['x'])
+    
+    def gety(self,data:np.lib.npyio.NpzFile):
+        return torch.IntTensor(data['y'])
+
+    def getaux(self,data:np.lib.npyio.NpzFile):
+        return torch.FloatTensor(data['aux'])
+    
+    def getevent_id(self,data:np.lib.npyio.NpzFile):
+        return torch.IntTensor(data['event_id'])
+    
+    def gettraj_id(self,data:np.lib.npyio.NpzFile):
+        return torch.IntTensor(data['traj_id'])
+    
+    def getc(self,data:np.lib.npyio.NpzFile):
+        return None
 
 
 def generate_dataset(

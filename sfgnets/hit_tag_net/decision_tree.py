@@ -2,7 +2,7 @@ import numpy as np
 import sklearn as sk
 from sklearn import tree
 
-from sfgnets.dataset import EventDataset
+from ..datasets.dataclass import EventDataset
 
 ## Dataset for the decision tree 
 class HitTagTreeDataset(EventDataset):

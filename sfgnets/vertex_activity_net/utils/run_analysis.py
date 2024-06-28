@@ -37,5 +37,5 @@ per_event_analysis,per_particle_analysis = analyze_testset(model=transformer, te
                                                            )
 
 
-with open("/scratch4/maubin/results/vatransformer_v8_analysis.pk","wb") as f:
+with open("/scratch4/maubin/results/vatransformer_v9_analysis.pk","wb") as f:
     pk.dump((per_event_analysis,per_particle_analysis),f)

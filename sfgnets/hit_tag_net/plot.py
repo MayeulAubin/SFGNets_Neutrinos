@@ -7,12 +7,13 @@ import pickle as pk
 import tqdm
 import numpy as np
 import matplotlib.pyplot as plt
-from sfgnets.dataset import SparseEvent, RANGES, CUBE_SIZE, transform_inverse_cube
 from sklearn.metrics import precision_recall_fscore_support, classification_report, confusion_matrix, explained_variance_score, accuracy_score, ConfusionMatrixDisplay
 import corner
 import matplotlib
 import particle
-from sfgnets.plotting.plot_3D_events import plotly_event_hittag as _plotly_event_hittag
+
+from ..utils.plot_3D_events import plotly_event_hittag as _plotly_event_hittag
+from .dataset import SparseEvent, RANGES, CUBE_SIZE, transform_inverse_cube
 
 plt.rcParams['text.usetex'] = True
 
@@ -78,7 +79,7 @@ def print_classification_report(data:DataContainer|tuple[dict,SparseEvent],**kwa
 
 def plot_pred_proba(data:DataContainer|tuple[dict,SparseEvent],
                      show:bool=True,
-                     savefig_path:str=None,
+                     savefig_path:str|None=None,
                      model_name:str='',
                      y_log_scale:bool=y_log_scale,
                     labels_pred_proba=["Pred Vertex activity", "Pred Single P", "Pred Noise"],

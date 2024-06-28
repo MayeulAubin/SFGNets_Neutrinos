@@ -11,6 +11,8 @@ import numpy as np
 import torch
 import tqdm
 
+from sfgnets.datasets.constants import CUBE_SIZE
+
 
 def set_random_seed(seed, random=None, numpy=None, torch=None):
     """
@@ -398,11 +400,34 @@ def shift_position(pos, centered_pos, cube_size, test_set):
 
 
 
+def approximation_formula_va_energy(total_charge:np.ndarray|float,
+                                    trajectory_length_longest_proton:np.ndarray|float,
+                                    calibration_coeff:float=67.,
+                                    birks_coeff:float=0.126) -> np.ndarray|float :
+    """
+    Estimate the vertex activity region energy using the approximation formula
+
+    Args:
+        total_charge (np.ndarray|float): total hit charge (number of photo electrons) summed over the vertex activity hits (all but muons hits)
+        trajectory_length_longest_proton (np.ndarray|float): length of the trajectory of the proton travelling the furthest, in mm
+        calibration_coeff (float): calibration coefficient of the detector, in photo electrons per MeV
+        birks_coeff (float): Birks coefficient of the detector, in mm/MeV
+
+    Returns:
+        approximated_vertex_activity_energy (np.ndarray|float): approximated energy of the vertex activity region
+    """
+    
+    return (total_charge/calibration_coeff)/np.clip((1-birks_coeff*(total_charge/calibration_coeff)/trajectory_length_longest_proton),1e-2,1e3)
+
+
+
+
+
 def analyze_event(model,
                   test_set,
                   event_n:int):
     # Run the decomposing transformer and get particle information
-    _, _, exit_muon, params_true, params_pred, pids_true, pids_pred, vtx_true, vtx_pred = \
+    images, _, exit_muon, params_true, params_pred, pids_true, pids_pred, vtx_true, vtx_pred = \
                             eval_event(event_n, model, test_set)
                             
     # Extract muon exit information
@@ -434,6 +459,16 @@ def analyze_event(model,
     
     pid_accuracy = (pids_true[:min_nb] == pids_pred[:min_nb])
     
+    if images[1:].any():
+        trajectory_length_longest = np.max(np.linalg.norm(np.array(np.where(np.sum(images[1:],axis=0)))-4,axis=0))*CUBE_SIZE*2.
+        trajectory_length_longest = np.clip(trajectory_length_longest, 1e-1, 1e3) # avoid division by zero
+    else:
+        trajectory_length_longest = 1000.
+    total_charge = np.sum(images[1:])
+    approximated_vertex_activity_energy = approximation_formula_va_energy(total_charge,trajectory_length_longest)
+    
+    
+    
     return {
             ## True information
             "ke":ke,
@@ -450,6 +485,7 @@ def analyze_event(model,
             "nb_pred":nb_pred,
             
             "min_nb":min_nb,
+            "formula_total_ke":approximated_vertex_activity_energy,
             }
 
 
@@ -469,11 +505,13 @@ def analyze_testset(model,
                              "nb_protons":[],
                              "nb_neutrons":[],
                              "total_ke":[],
-                             "total_ke_diff":[],
                              "ke_protons":[],
                              "ke_neutrons":[],
                              
                              ## Analysis information
+                             "total_ke_diff":[],
+                             "total_ke_res_%":[],
+                             "total_ke_abs_res_%":[],
                              "vtx_distance":[],
                              "nb_pred":[],
                              "nb_part_diff":[],
@@ -481,6 +519,10 @@ def analyze_testset(model,
                              "pid_accuracy":[],
                              "ke_diff_avg":[],
                              "angle_distance_avg":[],
+                             "formula_total_ke":[],
+                             "formula_total_ke_diff":[],
+                             "formula_total_ke_res_%":[],
+                             "formula_total_ke_abs_res_%":[],
                             }
     
     
@@ -498,6 +540,7 @@ def analyze_testset(model,
                              
                              ## Analysis information
                              "ke_diff":[],
+                             "ke_res_%":[],
                              "ke_abs_diff":[],
                              "angle_distance":[],
                              "pid_accuracy":[],
@@ -519,11 +562,13 @@ def analyze_testset(model,
         per_event_analysis["nb_protons"].append(np.sum(analysis_event["pid"]==0))
         per_event_analysis["nb_neutrons"].append(np.sum(analysis_event["pid"]==1))
         per_event_analysis["total_ke"].append(np.sum(analysis_event["ke"]))
-        per_event_analysis["total_ke_diff"].append(analysis_event["total_ke_diff"])
         per_event_analysis["ke_protons"].append(np.sum(analysis_event["ke"]*(analysis_event["pid"]==0)))
         per_event_analysis["ke_neutrons"].append(np.sum(analysis_event["ke"]*(analysis_event["pid"]==1)))
         
         ## Performances per event
+        per_event_analysis["total_ke_diff"].append(analysis_event["total_ke_diff"])
+        per_event_analysis["total_ke_res_%"].append(100*analysis_event["total_ke_diff"]/np.clip(np.sum(analysis_event["ke"]),1.,None))
+        per_event_analysis["total_ke_abs_res_%"].append(np.abs(per_event_analysis["total_ke_res_%"][-1]))
         per_event_analysis["nb_pred"].append(analysis_event["nb_pred"])
         per_event_analysis["nb_part_diff"].append(analysis_event["nb_part"]-analysis_event["nb_pred"])
         per_event_analysis["nb_part_abs_diff"].append(np.abs(analysis_event["nb_part"]-analysis_event["nb_pred"]))
@@ -531,6 +576,10 @@ def analyze_testset(model,
         per_event_analysis["vtx_distance"].append(analysis_event["vtx_distance"])
         per_event_analysis["ke_diff_avg"].append(np.mean(np.abs(analysis_event["ke_diff"])))
         per_event_analysis["angle_distance_avg"].append(np.mean(analysis_event["angle_distance"]))
+        per_event_analysis["formula_total_ke"].append(analysis_event["formula_total_ke"])
+        per_event_analysis["formula_total_ke_diff"].append(per_event_analysis["total_ke"][-1]-analysis_event["formula_total_ke"])
+        per_event_analysis["formula_total_ke_res_%"].append(100*(per_event_analysis["total_ke"][-1]-analysis_event["formula_total_ke"])/np.clip(per_event_analysis["total_ke"][-1],1.,None))
+        per_event_analysis["formula_total_ke_abs_res_%"].append(np.abs(per_event_analysis["formula_total_ke_res_%"][-1]))
         
         ## True information per particle
         min_nb = analysis_event["min_nb"]
@@ -548,6 +597,7 @@ def analyze_testset(model,
         per_particle_analysis["pid_accuracy"].extend(list(analysis_event["pid_accuracy"]))
         per_particle_analysis["vtx_distance"].extend([analysis_event["vtx_distance"] for k in range(min_nb)])
         per_particle_analysis["ke_diff"].extend(list(analysis_event["ke_diff"][:min_nb]))
+        per_particle_analysis["ke_res_%"].extend(list(100*analysis_event["ke_diff"][:min_nb]/np.clip(analysis_event["ke"][:min_nb],1.,None)))
         per_particle_analysis["ke_abs_diff"].extend(list(np.abs(analysis_event["ke_diff"][:min_nb])))
         per_particle_analysis["angle_distance"].extend(list(analysis_event["angle_distance"]))
         

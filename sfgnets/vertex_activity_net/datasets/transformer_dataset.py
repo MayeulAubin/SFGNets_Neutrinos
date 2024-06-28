@@ -309,7 +309,7 @@ class TransformerDataset(Dataset):
                 
                 if particle['exit']:
                     # discard additional exiting particles
-                    # print("adjacent cube to the VA region")
+                    # print("exiting particle")
                     continue
             
             # Reconstruct the image from sparse points to a NxNxN volume
