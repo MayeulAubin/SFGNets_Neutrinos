@@ -13,9 +13,9 @@ import torch
 import pytorch_lightning as pl
 
 from torch.utils.data import DataLoader
-from datasets import GANDataset
-from models import Generator, Critic, WGAN_GP_Loss, LightningModelGAN
-from utils import args_gan
+from ..datasets import GANDataset
+from ..models import Generator, Critic, WGAN_GP_Loss, LightningModelGAN
+from ..utils import args_gan
 from pytorch_lightning.loggers import CSVLogger
 from pytorch_lightning.callbacks import ModelCheckpoint
 

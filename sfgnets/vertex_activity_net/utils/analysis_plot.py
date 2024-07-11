@@ -41,9 +41,10 @@ if __name__ == '__main__':
                     description='Fine tunes a model for Track Fitting in SFG',)
 
     parser.add_argument('-p', '--per_particle', action='store_true', help='analysis per particle instead of per event')
+    parser.add_argument("-v", "--version", type=int, default=1, help="Version of the model analysis to plot")
     args = parser.parse_args()
     
-    with open("/scratch4/maubin/results/vatransformer_v9_analysis.pk","rb") as f:
+    with open(f"/scratch4/maubin/results/vatransformer_v{args.version}_analysis.pk","rb") as f:
         (per_event_analysis,per_particle_analysis)=pk.load(f)
 
     if args.per_particle:

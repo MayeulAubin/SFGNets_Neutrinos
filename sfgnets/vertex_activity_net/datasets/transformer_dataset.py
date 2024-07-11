@@ -21,6 +21,16 @@ from ..utils import set_random_seed, shift_image, shift_particle, fix_exit_shift
 
 
 class TransformerDataset(Dataset):
+    
+    keys = set(['images',
+               'ini_pos',
+               'params',
+               'pids',
+               'exit_muon',
+               'lengths',
+               'sfgd_images'])
+    
+    empty_item = {key:None for key in keys}
 
     def __init__(self, config: dict, split: str = "train"):
         """
@@ -33,6 +43,7 @@ class TransformerDataset(Dataset):
         Returns:
             None
         """
+        super().__init__()
         
         self.mu_particles = config["mu_particles"]
         self.additional_particles = config["additional_particles"]
@@ -229,7 +240,7 @@ class TransformerDataset(Dataset):
         shift_x, shift_y, shift_z = np.random.randint(-self.cube_shift, self.cube_shift + 1, 3)
 
         # Prepare event
-        images, params, lens, muon_exit, sfgd_images = [], [], [], [], []
+        images, params, lengths, muon_exit, sfgd_images = [], [], [], [], []
         only_one_muon = True
         for i, particle in enumerate(particles):
             ## Shift the coordinates to have the center point at 0 0 0
@@ -266,14 +277,7 @@ class TransformerDataset(Dataset):
                 
                 if not particle['exit']:
                     # print("exit")
-                    return {'images': None,
-                            'ini_pos': None,
-                            'params': None,
-                            'pids': None,
-                            'exit_muon': None,
-                            'lens': None,
-                            'sfgd_images':None
-                            }
+                    return self.empty_item
 
                 # Exiting reconstructed kinematics on outer
                 # (img_size+2) x (img_size+2) x (img_size+2) cube VA volume
@@ -343,7 +347,7 @@ class TransformerDataset(Dataset):
             # Store particle information
             images.append(shifted_image)
             params.append(np.concatenate((pos_ini, ke, theta, phi)))
-            lens.append(length)
+            lengths.append(length)
             pids.append(self.PID_FROM_PARTICLE[parts[i]])
             sfgd_images.append(particle['sparse_image'].copy())
 
@@ -353,49 +357,28 @@ class TransformerDataset(Dataset):
         # assert not only_one_muon
         if only_one_muon:
             # print("no muon")
-            return {'images': None,
-                    'ini_pos': None,
-                    'params': None,
-                    'pids': None,
-                    'exit_muon': None,
-                    'lens': None,
-                    'sfgd_images':None
-                    }
+            return self.empty_item
         
         # check that we have at least one particle
         if len(images) == 0:
             # print("len 0")
-            return {'images': None,
-                    'ini_pos': None,
-                    'params': None,
-                    'pids': None,
-                    'exit_muon': None,
-                    'lens': None,
-                    'sfgd_images':None
-                    }
+            return self.empty_item
         
         # check that we have at least two particles
         if len(images) == 1:
             # print("len 1")
-            return {'images': None,
-                    'ini_pos': None,
-                    'params': None,
-                    'pids': None,
-                    'exit_muon': None,
-                    'lens': None,
-                    'sfgd_images':None
-                    }
+            return self.empty_item
 
         # Lists to numpy arrays
         images = np.array(images)
         params = np.array(params)
-        lens = np.array(lens)
+        lengths = np.array(lengths)
         pids = np.array(pids)  # particle identification
         # Sort additional particles by kinetic energy in descendent order (don't order the muon)
         order = params[1:, 3].argsort()[::-1]
         images[1:] = images[1:][order]
         params[1:] = params[1:][order]
-        lens[1:] = lens[1:][order]
+        lengths[1:] = lengths[1:][order]
         pids[1:] = pids[1:][order]
 
         # Exiting muon information
@@ -407,7 +390,7 @@ class TransformerDataset(Dataset):
                  'params': params[:, 3:],  # KE, theta, phi
                  'pids': pids,  # particle type (defined with PID_FROM_PDG)
                  'exit_muon': exit_muon,  # exiting point, KE, theta, phi
-                 'lens': lens,
+                 'lengths': lengths,
                 'sfgd_images':sfgd_images # sparse images for event display
                  }
 
@@ -451,7 +434,7 @@ class TransformerDataset(Dataset):
             pos_ini = torch.tensor(event['ini_pos'])
             params = torch.tensor(event['params'][1:])  # exclude muon params
             pids = torch.tensor(event['pids'][1:] - 1)
-            lens = torch.tensor(event['lens'])
+            lengths = torch.tensor(event['lengths'])
 
             # Set the transformer-decoder ending condition
             is_next = torch.ones(size=(params.shape[0],))
@@ -467,7 +450,7 @@ class TransformerDataset(Dataset):
             params_batch.append(params)
             is_next_batch.append(is_next)
             pids_batch.append(pids)
-            lens_batch.append(lens)
+            lens_batch.append(lengths)
 
         assert len(img_batch) > 0
 

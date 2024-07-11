@@ -80,7 +80,8 @@ class LightningModelTransformer(pl.LightningModule):
         Returns:
             loss1: Loss for vertex position.
             loss2: Loss for kinematic parameters.
-            loss3: Loss for keep iterating.
+            loss3: Loss for PID.
+            loss4: Loss for keep iterating.
             loss: Total loss.
             batch_size: Batch size.
             lr: Current learning rate.

@@ -6,6 +6,8 @@ import tqdm
 import particle
 import pickle as pk
 
+from ..constants import RANGES, CUBE_SIZE, ORIGIN
+
 
 def prod_numpy_hittag_dataset(root_input_file,
                               output_dir,
@@ -855,14 +857,14 @@ def prod_numpy_pbomb_dataset(root_input_file:rt.TFile,
     charge_dict=dict(zip(list_of_particles,list_of_charges))
     
     eps = 1e-4
-    cube_size = 10.27
+    cube_size = 2*CUBE_SIZE
     bins = 30
     bin_edges = np.linspace(start=-cube_size/2.-eps, stop=cube_size/2.+eps, num=bins+1)
     
     
-    origin_point = np.array([[5.13, 35.13, -1938.80]])
-    VA_region_full_size = 9*10.27
-    VA_region_reduced_size = 7*10.27
+    origin_point = ORIGIN
+    VA_region_full_size = 9*cube_size
+    VA_region_reduced_size = 7*cube_size
 
 
     recon_dir = root_input_file.Get(

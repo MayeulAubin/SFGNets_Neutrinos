@@ -53,9 +53,11 @@ def main():
                              emb_size=args.hidden,
                              num_head=args.attn_heads,
                              img_size=config["img_size"],
-                             tgt_size=config["target_size"],
+                             kin_tgt_size=config["target_size"],
+                            #  pid_tgt_size=len(config["additional_particles"]),
+                             pid_tgt_size=3, # default value
                              dropout=args.dropout,
-                             max_len=config["max_p"]+config["max_n"],
+                             max_len=sum([config[f"max_{part}"] for part in config["additional_particles"]]),
                              device=device,
                              )
     
@@ -67,7 +69,10 @@ def main():
     if args.fine_tuning:
         # Fine-tuning
         print("Fine tuning ...")
-        model.load_state_dict(torch.load(config["checkpoint_path"]))
+        weights = torch.load(config["checkpoint_path"])
+        ## Set the positional encoding embedding to that of the current VA transformer (the positional encoding embedding is the only "weight" to change shape when the model changes the number of particles to predict)
+        weights["pos_encoding_tgt.pos_embedding"] = model.state_dict()["pos_encoding_tgt.pos_embedding"]
+        model.load_state_dict(weights)
 
     # Loss functions
     loss_fn1 = torch.nn.MSELoss()  # vertex position
@@ -122,7 +127,15 @@ def main():
         train_dataloaders=train_loader,
         val_dataloaders=val_loader,
     )
-
+    
+    ## Get the best model
+    print(f"Best model score is: {checkpoint_callback.best_model_score:.2e}")
+    best_model_checkpoint = torch.load(checkpoint_callback.best_model_path)
+    weights2 = best_model_checkpoint['state_dict']
+    ## Delete the "model." prefix of the checkpoint statedict and move the tensors to the CPU
+    weights2 = { k[6:]:v.to('cpu') for k,v in weights2.items()}
+    ## Saving the best model weights
+    torch.save(weights2, config["save_path"]+f"/vatransformer_v{int(CSVLogger.version)}.pth")
 
 if __name__ == "__main__":
     main()

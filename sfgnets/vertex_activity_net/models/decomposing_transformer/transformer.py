@@ -24,10 +24,11 @@ class VATransformer(nn.Module):
                  emb_size: int,
                  num_head: int,
                  img_size: int,
-                 tgt_size: int,
+                 kin_tgt_size: int,
+                 pid_tgt_size: int,
                  dropout: float = 0.1,
                  max_len: int = 10,
-                 device: object = None
+                 device: str|torch.device|None = None
                  ):
         super(VATransformer, self).__init__()
         # Initialise the Transformer model
@@ -38,8 +39,8 @@ class VATransformer(nn.Module):
                                        dim_feedforward=emb_size * 4,
                                        dropout=dropout)
         # Linear layer for target embedding
-        self.tgt_emb_kin = nn.Linear(tgt_size, emb_size)
-        self.tgt_emb_pid = nn.Embedding(4, emb_size)
+        self.tgt_emb_kin = nn.Linear(kin_tgt_size, emb_size)
+        self.tgt_emb_pid = nn.Embedding(pid_tgt_size+1, emb_size) # the number of embeddings should also be changed to fit the number of additional particles "pid_tgt_size". But it is not necessary
         # Embedding source module
         self.src_emb = EmbeddingSource(emb_size=emb_size, img_size=img_size, dropout=dropout, device=device)
         # Positional encoding for target
@@ -47,13 +48,13 @@ class VATransformer(nn.Module):
         # Linear layer to map encoder memory to vertex position
         self.memory2vertex = nn.Linear(emb_size, 3)
         # Linear layer for output parameters
-        self.output_kin = nn.Linear(emb_size, tgt_size)
-        self.output_pid = nn.Linear(emb_size, 3)
+        self.output_kin = nn.Linear(emb_size, kin_tgt_size)
+        self.output_pid = nn.Linear(emb_size, pid_tgt_size)
         # Linear layer to determine whether to keep iterating
         self.keep_iterating = nn.Linear(emb_size, 2)
         # First token as a learnable parameter
-        self.first_token_kin = nn.Parameter(torch.randn(1, tgt_size))
-        self.first_token_pid = torch.tensor([[3]]).long().to(device)
+        self.first_token_kin = nn.Parameter(torch.randn(1, kin_tgt_size))
+        self.first_token_pid = torch.tensor([[pid_tgt_size]]).long().to(device)
 
     def _init_weights(self, module):
         """

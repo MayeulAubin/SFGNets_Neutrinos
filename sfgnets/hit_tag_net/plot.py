@@ -14,6 +14,7 @@ import particle
 
 from ..utils.plot_3D_events import plotly_event_hittag as _plotly_event_hittag
 from .dataset import SparseEvent, RANGES, CUBE_SIZE, transform_inverse_cube
+from ..datasets.constants import ORIGIN
 
 plt.rcParams['text.usetex'] = True
 
@@ -34,6 +35,7 @@ reaction_codes_short_labels=['tot', 'ccqe', 'ccppip', 'ccppi0', 'ccnpip', 'cccoh
 reaction_codes_long_labels=['Total', 'CCQE: $\\nu_{l} n \\rightarrow l^{-} p$', 'CC 1$\\pi: \\nu_{l} p \\rightarrow l^{-} p \\pi^{+}$', 'CC 1$\\pi: \\nu_{l} n \\rightarrow l^{-} p \\pi^{0}$', 'CC 1$\\pi: \\nu_{l} n \\rightarrow l^{-} n \\pi^{+}$', 'CC coherent-$\\pi: \\nu_{l} ^{16}O \\rightarrow l^{-} ^{16}O \\pi^{+}$', '1$\\gamma from \\Delta: \\nu_{l} n \\rightarrow l^{-} p \\gamma$', "CC (1.3 < W < 2 GeV): $\\nu_{l} N \\rightarrow l^{-} N' multi-\\pi", 'CC 1$\\eta: \\nu_{l} n \\rightarrow l^{-} p \\eta$', 'CC 1K: $\\nu_{l} n \\rightarrow l^{-} \\Lambda K^{+}$', "CC DIS (2 GeV $\leq W$): $\\nu_{l} N \\rightarrow l^{-} N' mesons$", 'NC 1$\\pi: \\nu_{l} n \\rightarrow \\nu_{l} n \\pi^{0}$', 'NC 1$\\pi: \\nu_{l} p \\rightarrow \\nu_{l} p \\pi^{0}$', 'NC 1$\\pi: \\nu_{l} n \\rightarrow \\nu_{l} p \\pi^{-}$', 'NC 1$\\pi: \\nu_{l} p \\rightarrow \\nu_{l} n \\pi^{+}$', 'NC coherent-\\pi: $\\nu_{l} ^{16}O \\rightarrow \\nu_{l} ^{16}O \\pi^{0}$', '1\\gamma from \\Delta: $\\nu_{l} n \\rightarrow \\nu_{l} n \\gamma$', '1\\gamma from \\Delta: $\\nu_{l} p \\rightarrow \\nu_{l} p \\gamma$', 'NC (1.3 < W < 2 GeV): $\\nu_{l} N \\rightarrow \\nu_{l} N multi-\\pi$', 'NC 1\\eta: $\\nu_{l} n \\rightarrow \\nu_{l} n \\eta$', 'NC 1\\eta: $\\nu_{l} p \\rightarrow \\nu_{l} p \\eta$', 'NC 1K: $\\nu_{l} n \\rightarrow \\nu_{l} \\Lambda K^{0}$', 'NC 1K: $\\nu_{l} n \\rightarrow \\nu_{l} \\Lambda K^{+}$', "NC DIS (2 GeV < W): $\\nu_{l} N \\rightarrow \\nu_{l} N' mesons", 'NC elastic: $\\nu_{l} n \\rightarrow \\nu_{l} n','NC elastic: $\\nu_{l} p \\rightarrow \\nu_{l} p']
 reaction_codes_short_labels_dict=dict(zip(reaction_codes,reaction_codes_short_labels))
 reaction_codes_long_labels_dict=dict(zip(reaction_codes,reaction_codes_long_labels))
+reaction_codes_short_to_long_labels_dict=dict(zip(reaction_codes_short_labels,reaction_codes_long_labels))
 
 
 color_list = ["#3f7dae","#ae703f",'#117238', '#4e6206', '#6e4d00','#823312','#851433']
@@ -162,7 +164,7 @@ def plot_crossed_distribution(data:DataContainer|tuple[dict,SparseEvent],
 
 
 def _get_perf_binning(data:DataContainer,
-                 features:np.array,
+                 features:np.ndarray,
                  lims:tuple[float,float],
                  Nbins:int=100,
                  use_log_scale:bool=use_log_scale,
@@ -185,11 +187,11 @@ def _get_perf_binning(data:DataContainer,
     return np.array(prec), np.array(reca), np.array(f1), bins,
 
 
-def _plot_perf_dist(precision:np.array,
-                    recall:np.array,
-                    f1_score:np.array,
-                    bins:np.array,
-                    features:np.array,
+def _plot_perf_dist(precision:np.ndarray,
+                    recall:np.ndarray,
+                    f1_score:np.ndarray,
+                    bins:np.ndarray,
+                    features:np.ndarray,
                     feature_name:str,
                     xlabel:str,
                     model_name:str='',
@@ -279,7 +281,7 @@ def plot_perf_charge(data:DataContainer|tuple[dict,SparseEvent],
 
 
 def _get_perf_bars(data:DataContainer,
-                 features:np.array,
+                 features:np.ndarray,
                  bars:list[float],
                  show_progress_bar:bool=True,
                  **kwargs)-> tuple[np.ndarray]:
@@ -310,10 +312,10 @@ def _get_perf_bars(data:DataContainer,
 
 
 
-def _plot_perf_bars(precision:np.array,
-                    recall:np.array,
-                    f1_score:np.array,
-                    count:np.array,
+def _plot_perf_bars(precision:np.ndarray,
+                    recall:np.ndarray,
+                    f1_score:np.ndarray,
+                    count:np.ndarray,
                     bar_names:list[str],
                     feature_name:str,
                     xlabel:str,
@@ -392,7 +394,7 @@ def plot_perf_interaction(data:DataContainer|tuple[dict,SparseEvent],
 
 
 def _get_perf_binning_by_tag(data:DataContainer,
-                            features:np.array,
+                            features:np.ndarray,
                             lims:tuple[float,float],
                             Nbins:int=100,
                             use_log_scale:bool=use_log_scale,
@@ -416,19 +418,19 @@ def _get_perf_binning_by_tag(data:DataContainer,
 
 
 
-def _plot_perf_dist_by_tag(eff:np.array,
-                            bins:np.array,
+def _plot_perf_dist_by_tag(eff:np.ndarray,
+                            bins:np.ndarray,
                             vals:list[np.ndarray],
-                            features:np.array,
+                            features:np.ndarray,
                             feature_name:str,
                             xlabel:str,
                             model_name:str='',
                             show:bool=True,
-                            savefig_path:str=None,
+                            savefig_path:str|None=None,
                             color_list:list[str]=color_list,
                             y_log_scale:bool=y_log_scale,
                             face_colors:list[str]=["#cae8c8","#e7d4c6"],
-                            figsize:tuple[float]=(36,18),
+                            figsize:tuple[float|int,float|int]=(36,18),
                             **kwargs):
     
     ## Plot the efficiency depending on the true/pred label and a feature
@@ -522,10 +524,10 @@ def plot_perf_charge_by_tag(data:DataContainer|tuple[dict,SparseEvent],
 
 
 def _get_perf_bars_by_tag(data:DataContainer,
-                 features:np.array,
+                 features:np.ndarray,
                  bars:list[float],
                  show_progress_bar:bool=True,
-                 **kwargs)-> tuple[np.ndarray]:
+                 **kwargs)-> tuple[np.ndarray,list,list]:
     
     
     eff=[[[],[]],[[],[]],[[],[]]]
@@ -551,13 +553,13 @@ def _get_perf_bars_by_tag(data:DataContainer,
                         data.val_true[indexes], data.val_pred[indexes], average=None, labels=[0,1,2])
             eff[k][l].append(recall[k] if l==0 else precision[k])
     
-    return np.array(eff), count, vals,
+    return np.array(eff), count, vals
 
 
 
 
-def _plot_perf_bars_by_tag(eff:np.array,
-                            count:np.array,
+def _plot_perf_bars_by_tag(eff:np.ndarray,
+                            count:np.ndarray,
                             vals:list[np.ndarray],
                             bar_names:list[str],
                             feature_name:str,
@@ -588,7 +590,7 @@ def _plot_perf_bars_by_tag(eff:np.array,
             rect=ax2[l][k].bar(x=bar_names, height=count[k][l], alpha=0.3, label="Support")
             ax2[l][k].set_ylabel('Support')
             if y_log_scale:
-                ax2.set_yscale('log')        
+                ax2[l][k].set_yscale('log')        
             ax.legend()
             ax2[l][k].legend(loc="lower right")
             
@@ -652,7 +654,7 @@ def plot_perf_interaction_by_tag(data:DataContainer|tuple[dict,SparseEvent],
 def plot_event_display(data:DataContainer|tuple[dict,SparseEvent],
                        i:int=0,
                      show:bool=True,
-                     savefig_path:str=None,
+                     savefig_path:str|None=None,
                      model_name:str='',
                      **kwargs):
     
@@ -667,6 +669,7 @@ def plot_event_display(data:DataContainer|tuple[dict,SparseEvent],
                             max_energies=150,
                             hittags=data.all_results['y'][i][:,0],
                             general_label="True ",
+                            pdg=data.all_results['aux'][i][:,0],
                             xyz_ranges=RANGES,)
 
     hit_tag_pred=data.all_results['predictions'][i].copy()
@@ -765,3 +768,71 @@ def plots(data:DataContainer|tuple[dict,SparseEvent],
                         **kwargs))
     
     return figs
+
+
+def get_interaction_type(data:DataContainer,
+                         i:int) -> str:
+    return reaction_codes_short_labels_dict[int(np.abs(data.all_results['aux'][i][0,1]))] if int(np.abs(data.all_results['aux'][i][0,1])) in reaction_codes_short_labels_dict.keys() else 'other'
+
+
+
+def get_vertex_position(data:DataContainer,
+                         i:int) -> np.ndarray:
+    
+    X=data.all_results['c'][i].copy()
+    X=transform_inverse_cube(X)
+    f=data.dataset.scaler_minmax.inverse_transform(data.all_results['f'][i].copy())
+    return (X-f[:,1:]).mean(axis=0)
+
+
+def list_index_interaction_type(data:DataContainer,
+                                interaction_type:str,
+                                imax:int|None=None) -> list[int]:
+    if imax is None:
+        imax=len(data)
+    I=[]
+    
+    for i in range(imax):
+        if get_interaction_type(data,i)==interaction_type:
+            I.append(i)
+    return I
+
+
+
+def list_index_vertex_contained(data:DataContainer,
+                                fiducial_box:np.ndarray=(RANGES[:,1]-RANGES[:,0])/4,
+                                imax:int|None=None) -> list[int]:
+    if imax is None:
+        imax=len(data)
+    I=[]
+    
+    for i in range(imax):
+        verPos = get_vertex_position(data,i)
+        if (np.abs(verPos-ORIGIN)<fiducial_box).all():
+            I.append(i)
+    return I
+
+
+def list_index_number_hits(data:DataContainer,
+                           min_number_hits:int|None=400,
+                           max_number_hits:int|None=None,
+                           imax:int|None=None) -> list[int]:
+    if imax is None:
+        imax=len(data)
+    
+    if min_number_hits is None:
+        min_number_hits=0
+        
+    if max_number_hits is None:
+        max_number_hits=10000
+        
+    I=[]
+    
+    for i in range(imax):
+        if min_number_hits<=data.all_results['aux'][i].shape[0]<=max_number_hits:
+            I.append(i)
+    return I
+
+def intersect_list_indexes(lists_indexes:list[list[int]]) -> list[int]:
+    return list(set.intersection(*map(set, lists_indexes)))
+        

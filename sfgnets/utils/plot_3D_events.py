@@ -141,7 +141,7 @@ def plotly_event_general(pos3d:np.ndarray|None=None,
                     particle_pdg=pdg[j]
                     if j:
                         # if the pdg is already a number, then it should be converted to its string representation
-                        if type(particle_pdg) is int or type(particle_pdg) is float: 
+                        if type(particle_pdg) is int or type(particle_pdg) is float or type(particle_pdg) is np.float32: 
                             particle_pdg=int(particle_pdg)
                             # we first try to use the dictionary
                             try: 
