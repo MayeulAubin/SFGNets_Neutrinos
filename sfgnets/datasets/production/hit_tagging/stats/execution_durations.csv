@@ -1,0 +1,31 @@
+geant4, 0, 0, 329, 3000
+detres, 0, 0, 1402, 3000
+eventcalib, 0, 0, 184, 3000
+eventrecon, 0, 0, 1353, 3000
+eventana, 0, 0, 343, 3000
+neut_to_eventana, 0, 0, 3611, 3000
+
+selectEventSim is : 52.42 s
+nd280Geant4Sim is : 227.97 s
+detResponseSim is : 16100 s
+eventCalibMC is : 21.21 s
+eventRecon is : 10900 s
+eventAnalysis is : 308.92 s
+
+selectEventSim is : 59.70 s
+nd280Geant4Sim is : 212.98 s
+detResponseSim is : 16390 s
+eventCalibMC is : 31.106 s
+eventRecon is : 14580 s
+eventAnalysis is : 157.96 s
+
+
+geant4, 0, 0, 119
+detres, 0, 0, 473
+eventcalib, 0, 0, 22
+geant4&select, 0, 0, 108
+detres, 0, 0, 499
+eventcalib, 0, 0, 21
+eventrecon, 0, 0, 3859
+eventana, 0, 0, 284
+neut_to_eventana, 0, 0, 4771
