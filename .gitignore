@@ -3,8 +3,8 @@ trajectory_fitting-main
 saul_trajectory_fitting
 NeutrinoVertex-DL-main
 
-# Notebooks for now
-*.ipynb
+# # Notebooks for now
+# *.ipynb
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
