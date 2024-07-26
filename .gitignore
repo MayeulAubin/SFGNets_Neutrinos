@@ -3,6 +3,12 @@ trajectory_fitting-main
 saul_trajectory_fitting
 NeutrinoVertex-DL-main
 
+# Results folder
+results
+
+models_weights
+datasets_samples_and_stats
+
 # # Notebooks for now
 # *.ipynb
 

@@ -64,7 +64,7 @@ class FittingTransformer(nn.Module):
     
 
 
-def create_baseline_model(x_in_channels:int=x_in_channels,
+def create_sparse_cnn_model(x_in_channels:int=x_in_channels,
                           y_out_channels:int=y_out_channels,
                           device:torch.device=device):
 

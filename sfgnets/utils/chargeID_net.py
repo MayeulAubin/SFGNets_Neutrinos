@@ -43,7 +43,7 @@ class ChargeIdDataset(EventDataset):
 
 def generate_dataset(
                     j_model:int=22,
-                    use_baseline:bool=False,
+                    use_sparse_cnn:bool=False,
                     masking_scheme:str='primary',
                     batch_size:int=16,
                     save_path:str="/scratch4/maubin/",
@@ -51,12 +51,12 @@ def generate_dataset(
                     scaler_file:str="/scratch4/maubin/data/scaler_trackfit2.p",
                     ):
     
-    if use_baseline:
-        model=track_fitting_net.create_baseline_model(y_out_channels=6, x_in_channels=1)
+    if use_sparse_cnn:
+        model=track_fitting_net.create_sparse_cnn_model(y_out_channels=6, x_in_channels=1)
     else:
         model=track_fitting_net.create_transformer_model(y_out_channels=6, x_in_channels=1)
         
-    model.load_state_dict(torch.load(f"{save_path}models/trackfit_model_{'baseline_' if use_baseline else ''}{j_model}.torch"))
+    model.load_state_dict(torch.load(f"{save_path}models/trackfit_model_{'sparse_cnn_' if use_sparse_cnn else ''}{j_model}.torch"))
     
 
     track_fitting_train_dataset=PGunEvent(root=dataset_folder,
@@ -64,19 +64,19 @@ def generate_dataset(
                                             files_suffix='npz',
                                             scaler_file=scaler_file,
                                             use_true_tag=True,
-                                            scale_coordinates=(not use_baseline),
+                                            scale_coordinates=(not use_sparse_cnn),
                                             targets=None,
                                             inputs=[0],
                                             masking_scheme=masking_scheme)
     
     track_fitting_full_loader=full_dataset(track_fitting_train_dataset,
-                        collate=track_fitting_net.collate_minkowski if use_baseline else track_fitting_net.collate_transformer,
+                        collate=track_fitting_net.collate_minkowski if use_sparse_cnn else track_fitting_net.collate_transformer,
                         batch_size=batch_size,)
     
     print("Predicting the track points position using the track fitting network...")
     track_fitting_all_results=track_fitting_net.test_full(loader=track_fitting_full_loader,
                                                             model=model,
-                                                            model_type="minkowski" if use_baseline else "transformer",
+                                                            model_type="minkowski" if use_sparse_cnn else "transformer",
                                                             progress_bar=True,
                                                             device=device,
                                                             do_we_consider_aux=True,
@@ -91,7 +91,7 @@ def generate_dataset(
                                             track_fitting_train_dataset,
                                             track_fitting_net.perf_fn,
                                             device, 
-                                            model_type="minkowski" if use_baseline else "transformer",
+                                            model_type="minkowski" if use_sparse_cnn else "transformer",
                                             do_we_consider_aux=True,
                                             do_we_consider_coord=True,
                                             do_we_consider_feat=True,
@@ -599,7 +599,7 @@ if __name__ == "__main__":
     parser.add_argument('save_path',metavar='Save_Path', type=str, help="Path to save results and models")
     parser.add_argument('--test_only', action='store_true', help='runs only the test (measure performances, plots, ...)')
     parser.add_argument('-T', '--test', action='store_true', help='runs test after training (measure performances, plots, ...)')
-    parser.add_argument('-B', '--baseline', action='store_true', help='use the baseline model (MinkUNet) for the track fitting, otherwise use the transformer')
+    parser.add_argument('-B', '--sparse_cnn', action='store_true', help='use the sparse_cnn model (MinkUNet) for the track fitting, otherwise use the transformer')
     parser.add_argument('-R', '--resume', action='store_true', help='resume the training by loading the saved model state dictionary')
     parser.add_argument('-s', '--sub_tqdm', action='store_true', help='displays the progress bars of the train and test loops for each epoch')
     parser.add_argument('-b', '--benchmarking', action='store_true', help='prints the execution time for benchmarking')
@@ -638,7 +638,7 @@ if __name__ == "__main__":
                 # generate dataset
                 dataset_dict=generate_dataset(
                         j_model=args.j_trackfit,
-                        use_baseline=args.baseline,
+                        use_sparse_cnn=args.sparse_cnn,
                         masking_scheme=args.ms,
                         batch_size=args.batch_size_trackfit,
                         save_path=args.save_path,
@@ -667,7 +667,7 @@ if __name__ == "__main__":
             if args.generate:
                 testdataset_dict=generate_dataset(
                         j_model=args.j_trackfit,
-                        use_baseline=args.baseline,
+                        use_sparse_cnn=args.sparse_cnn,
                         masking_scheme=args.ms,
                         batch_size=args.batch_size_trackfit,
                         save_path=args.save_path,

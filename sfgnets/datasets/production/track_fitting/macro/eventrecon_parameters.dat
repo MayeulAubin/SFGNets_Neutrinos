@@ -1,0 +1,6 @@
+< eventRecon.RunTpcRecon = 0 >
+< eventRecon.RunFgdRecon = 0 >
+< eventRecon.RunEcalRecon = 0 >
+< eventRecon.RunP0DEcalRecon = 0 >
+< eventRecon.RunP0DRecon = 0 >
+< eventRecon.RunSmrdRecon = 0 >

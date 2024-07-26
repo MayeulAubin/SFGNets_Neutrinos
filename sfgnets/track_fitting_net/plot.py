@@ -7,10 +7,11 @@ import pickle as pk
 import tqdm
 import numpy as np
 import matplotlib.pyplot as plt
-from .dataset import PGunEvent, RANGES, CUBE_SIZE
 import corner
 import matplotlib
 import particle
+
+from .dataset import PGunEvent, RANGES, CUBE_SIZE
 from ..utils.plot_3D_events import plotly_event_nodes as _plotly_event_nodes
 from ..utils.plot_3D_events import plotly_event_general as _plotly_event_general
 
@@ -34,7 +35,7 @@ x_lim_dist=(0.,40.) if use_log_scale else (0.5,40.)
 x_lim_dist_m=(0.,3500.) if use_log_scale else (0.,3500.)
 # x_lim_dist=(0.5,80) if use_log_scale else (0.5,80)
 x_lim_charge=(0.5,2000) if use_log_scale else (0.5, 300)
-delfault_dpi=300
+default_dpi=300
 Nbins=1000
 y_log_scale=True
 
@@ -77,10 +78,12 @@ class DataContainer:
         self.tag = all_results['aux'][:,7]
         self.number_of_particles = all_results['aux'][:,8]
         self.energy_deposited = all_results['aux'][:,9]
-        self.particle_pdg = all_results['aux'][:,10]
+        self.particle_pdg = all_results['aux'][:,10].astype(int)
         self.direction = all_results['aux'][:,11:14]
         self.traj_length = all_results['aux'][:,15]
         self.event_entry = all_results['aux'][:,16]
+        
+        self.neutral_particle = np.isin(self.particle_pdg,[22,2112])
         
         self.mask=(all_results["mask"][...,0]>0.)
         self.f=all_results['f']
@@ -103,13 +106,18 @@ class DataContainer:
             pred_norm=np.linalg.norm(pred_momentum,axis=-1)
             true_norm=np.linalg.norm(true_momentum,axis=-1)
             self.m_euclidian_distance=np.linalg.norm(pred_momentum-true_momentum,axis=1)
-            self.md_distance=np.arccos(np.sum(pred_momentum*true_momentum,axis=-1)/(pred_norm*true_norm+1e-3))
+            self.md_distance=np.arccos(np.sum(pred_momentum*true_momentum,axis=-1)/(pred_norm*true_norm+1e-3))*np.abs((pred_norm*true_norm)>1e-3)
             self.md_distance[(self.md_distance<0)+(self.md_distance>np.pi)]=np.pi
             self.md_distance[np.isnan(self.md_distance)]=np.pi
             self.mn_distance=np.abs(true_norm-pred_norm)
             self.recon_mn_distance=np.empty_like(self.md_distance)
             self.recon_m_euclidian_distance=np.empty_like(self.m_euclidian_distance)
-            self.recon_md_distance=np.arccos(np.sum(self.recon_d[all_results["mask"][...,0]>0.]*true_momentum,axis=-1)/(true_norm+1e-6))
+            self.recon_md_distance=np.arccos(np.sum(self.recon_d[all_results["mask"][...,0]>0.]*true_momentum,axis=-1)/(true_norm+1e-3))*np.abs(true_norm>1e-3)*(np.linalg.norm(self.recon_d[all_results["mask"][...,0]>0.],axis=1)>1e-3)
+            self.recon_md_distance[(self.recon_md_distance<0)+(self.recon_md_distance>np.pi)]=np.pi
+            self.recon_md_distance[np.isnan(self.recon_md_distance)]=np.pi
+            
+            self.md_distance*=180/np.pi
+            self.recon_md_distance*=180/np.pi
         else:
             self.momentum_is_available=False
         
@@ -121,7 +129,7 @@ class DataContainer:
 def plot_event_display(data:DataContainer|tuple[dict[str,np.ndarray],PGunEvent],
                        i:int=0,
                         show:bool=True,
-                        savefig_path:str=None,
+                        savefig_path:str|None=None,
                         pred_pdg_index:int=None,
                         show_target_momentum:bool=True,
                         show_pred_momentum:bool=False,
@@ -173,16 +181,16 @@ def plot_event_display(data:DataContainer|tuple[dict[str,np.ndarray],PGunEvent],
         fig.show()
     
     try:
-        print(f"Input particle: {particle_dict[int(data.input_particle[indexes].mean())]}")
+        print(f"Input particle: {particle_dict[int(data.input_particle[indexes].mean())]}  {np.max(np.linalg.norm(data.momentum[indexes],axis=1)):.0f} MeV")
     except KeyError:
-        print(f"Particle not recognized. Input particle(s) are :{np.unique(data.input_particle[indexes].astype(int))}")
+        print(f"Particle not recognized. Input particle(s) are :{np.unique(data.input_particle[indexes].astype(int))} with highest energy   {np.max(np.linalg.norm(data.momentum[indexes],axis=1)):.0f} MeV")
     
     return fig
     
 
 def plot_pred_X(data:DataContainer|tuple[dict[str,np.ndarray],PGunEvent],
                 show:bool=True,
-                savefig_path:str=None,
+                savefig_path:str|None=None,
                 mom:bool=False,
                 **kwargs):
     
@@ -207,7 +215,7 @@ def plot_pred_X(data:DataContainer|tuple[dict[str,np.ndarray],PGunEvent],
     ax.legend()
     
     if savefig_path is not None:
-        fig.savefig(savefig_path,dpi=delfault_dpi)
+        fig.savefig(savefig_path,dpi=default_dpi)
     
     if show:
         fig.show()
@@ -220,9 +228,9 @@ def _plot_euclidian_distance_dist(euclidian_distance:np.ndarray,
                              mom:bool=False,
                              y_log_scale=y_log_scale,
                              x_range:tuple[float,float]=None,
-                             x_unit:str=None,
-                             x_label:str=None,
-                             ax_title:str=None,
+                             x_unit:str|None=None,
+                             x_label:str|None=None,
+                             ax_title:str|None=None,
                              ax_args:dict={},
                              show_summary_stats:bool=True,
                              **kwargs):
@@ -250,9 +258,9 @@ def _plot_euclidian_distance_cdf(euclidian_distance:np.ndarray,
                              ax2,
                              mom:bool=False,
                              x_range:tuple[float,float]=None,
-                             x_unit:str=None,
-                             x_label:str=None,
-                             ax2_title:str=None,
+                             x_unit:str|None=None,
+                             x_label:str|None=None,
+                             ax2_title:str|None=None,
                              ax2_args:dict=dict(label="CDF",alpha=1.,color="#bf7e02"),
                              show_summary_stats:bool=True,
                              **kwargs):    
@@ -286,7 +294,7 @@ def _plot_euclidian_distance_cdf(euclidian_distance:np.ndarray,
 
 def plot_euclidian_distance(data:DataContainer|tuple[dict[str,np.ndarray],PGunEvent],
                 show:bool=True,
-                savefig_path:str=None,
+                savefig_path:str|None=None,
                 mom:bool=False,
                 compare_to_bayesian_filter:bool=False,
                 **kwargs):
@@ -303,6 +311,7 @@ def plot_euclidian_distance(data:DataContainer|tuple[dict[str,np.ndarray],PGunEv
         eucl=data.m_euclidian_distance
         recon_eucl=data.recon_m_euclidian_distance
     
+    
     if not compare_to_bayesian_filter:
         _plot_euclidian_distance_dist(eucl,ax,mom=mom,**kwargs)
         _plot_euclidian_distance_cdf(eucl,ax2,mom=mom,**kwargs)
@@ -315,7 +324,76 @@ def plot_euclidian_distance(data:DataContainer|tuple[dict[str,np.ndarray],PGunEv
         ax2.legend(loc="upper right")
     
     if savefig_path is not None:
-        fig.savefig(savefig_path,dpi=delfault_dpi)
+        fig.savefig(savefig_path,dpi=default_dpi)
+    
+    if show:
+        fig.show()
+        
+    return fig
+
+
+
+def plot_bare_distance(data:DataContainer,
+                show:bool=True,
+                savefig_path:str|None=None,
+                mom:bool=False,
+                compare_to_bayesian_filter:bool=False,
+                y_log_scale=y_log_scale,
+                x_range:tuple[float,float]|None=None,
+                x_unit:str|None=None,
+                x_label:str|None=None,
+                ax_title:str|None=None,
+                ax_args:dict={},
+                show_summary_stats:bool=False,
+                Nbins:int=500,
+                model_label:str='Best model',
+                figsize:tuple[float,float]=(12,6),
+                dpi:float=default_dpi,
+                **kwargs):
+    
+    
+    if x_range is None:
+        x_range=(0.,20.) if not mom else (0.,3000.)
+    if x_unit is None:
+        x_unit="mm" if not mom else "MeV"
+    if x_label is None:
+        x_label="Euclidian distance (mm)" if not mom else "Euclidian distance (MeV)"
+    if ax_title is None:
+        ax_title="Distribution of the euclidian distance between predicted and true nodes" if not mom else "Distribution of the euclidian distance between predicted and true momenta"
+    fig,ax=plt.subplots(figsize=figsize,facecolor='white',dpi=dpi)
+    
+    if not mom:
+        eucl=data.euclidian_distance
+        recon_eucl=data.recon_euclidian_distance
+    else:
+        eucl=data.m_euclidian_distance
+        recon_eucl=data.recon_m_euclidian_distance
+    
+    
+    hist_eucl,bin_edges=np.histogram(eucl,bins=Nbins,range=x_range,density=True)
+    hist_recon,bin_edges=np.histogram(recon_eucl,bins=Nbins,range=x_range,density=True)
+    bins=(bin_edges[1:]+bin_edges[:-1])/2.
+    ax.plot(bins,hist_eucl,label=model_label,**ax_args)
+    # ax.axvline(x=np.quantile(eucl,q=0.68),alpha=0.5)
+    # ax.axvline(x=np.quantile(eucl,q=0.95),alpha=0.2)
+    if compare_to_bayesian_filter:
+        ax.plot(bins,hist_recon,label="Bayesian filter",**ax_args)
+    ax.set_ylabel("Density of hits")
+    ax.set_yscale("log" if y_log_scale else 'linear')
+    if show_summary_stats:
+        ax.text(bin_edges[1].max()*0.83,hist_eucl[0].max()*0.8, f"Mean:    {np.mean(eucl):.3f} {x_unit}\nMedian: {np.median(eucl):.3f} {x_unit}", multialignment='left', bbox=dict(facecolor='white', alpha=0.5))
+    print(f"\tModel\nMean: {np.mean(eucl):.3f} {x_unit}\n68%:  {np.quantile(eucl,q=0.68):.3f} {x_unit}\n95%:  {np.quantile(eucl,q=0.95):.3f} {x_unit}\nMode: {bins[np.argmax(hist_eucl)]:.3f} {x_unit}")
+    if compare_to_bayesian_filter:
+        print(f"\tBayesian Filter\nMean: {np.mean(recon_eucl):.3f} {x_unit}\n68%:  {np.quantile(recon_eucl,q=0.68):.3f} {x_unit}\n95%:  {np.quantile(recon_eucl,q=0.95):.3f} {x_unit}\nMode: {bins[np.argmax(hist_recon)]:.3f} {x_unit}")
+    # ax.set_title(ax_title)
+    ax.set_xlabel(x_label)
+    ax.set_xlim(x_range)
+    ax.set_xticks(np.linspace(x_range[0],x_range[1],int(x_range[1]-x_range[0])+1  if not mom else 19), minor=True)
+    ax.set_xticks(np.linspace(x_range[0],x_range[1],5  if not mom else 10), major=True)
+    ax.legend(loc="upper right")
+    
+    if savefig_path is not None:
+        fig.savefig(savefig_path,dpi=default_dpi)
     
     if show:
         fig.show()
@@ -326,7 +404,7 @@ def plot_euclidian_distance(data:DataContainer|tuple[dict[str,np.ndarray],PGunEv
 
 def plot_euclidian_distance_by_input_particle(data:DataContainer|tuple[dict[str,np.ndarray],PGunEvent],
                 show:bool=True,
-                savefig_path:str=None,
+                savefig_path:str|None=None,
                 mom:bool=False,
                 **kwargs):
     
@@ -354,7 +432,7 @@ def plot_euclidian_distance_by_input_particle(data:DataContainer|tuple[dict[str,
     
     
     if savefig_path is not None:
-        fig.savefig(savefig_path,dpi=delfault_dpi)
+        fig.savefig(savefig_path,dpi=default_dpi)
     
     if show:
         fig.show()
@@ -366,7 +444,7 @@ def plot_euclidian_distance_by_input_particle(data:DataContainer|tuple[dict[str,
 
 def plot_euclidian_distance_by_node_n(data:DataContainer|tuple[dict[str,np.ndarray],PGunEvent],
                 show:bool=True,
-                savefig_path:str=None,
+                savefig_path:str|None=None,
                 mom:bool=False,
                 **kwargs):
     
@@ -399,7 +477,7 @@ def plot_euclidian_distance_by_node_n(data:DataContainer|tuple[dict[str,np.ndarr
     
     
     if savefig_path is not None:
-        fig.savefig(savefig_path,dpi=delfault_dpi)
+        fig.savefig(savefig_path,dpi=default_dpi)
     
     if show:
         fig.show()
@@ -412,7 +490,7 @@ def plot_euclidian_distance_by_node_n(data:DataContainer|tuple[dict[str,np.ndarr
 
 def plot_euclidian_distance_by_tag(data:DataContainer|tuple[dict[str,np.ndarray],PGunEvent],
                 show:bool=True,
-                savefig_path:str=None,
+                savefig_path:str|None=None,
                 mom:bool=False,
                 **kwargs):
     
@@ -445,7 +523,7 @@ def plot_euclidian_distance_by_tag(data:DataContainer|tuple[dict[str,np.ndarray]
     
     
     if savefig_path is not None:
-        fig.savefig(savefig_path,dpi=delfault_dpi)
+        fig.savefig(savefig_path,dpi=default_dpi)
     
     if show:
         fig.show()
@@ -458,7 +536,7 @@ def plot_euclidian_distance_by_tag(data:DataContainer|tuple[dict[str,np.ndarray]
 
 def plot_euclidian_distance_by_primary(data:DataContainer|tuple[dict[str,np.ndarray],PGunEvent],
                 show:bool=True,
-                savefig_path:str=None,
+                savefig_path:str|None=None,
                 mom:bool=False,
                 compare_to_bayesian_filter:bool=False,
                 **kwargs):
@@ -501,7 +579,7 @@ def plot_euclidian_distance_by_primary(data:DataContainer|tuple[dict[str,np.ndar
         ax2.annotate(f"Support: {len(euclidian_distance)/total_size*100:.1f}%",xy=(1.05, 0.5),xycoords='axes fraction',horizontalalignment='center', verticalalignment='center', fontsize=18, rotation=90)
     
     if savefig_path is not None:
-        fig.savefig(savefig_path,dpi=delfault_dpi)
+        fig.savefig(savefig_path,dpi=default_dpi)
     
     if show:
         fig.show()
@@ -512,7 +590,7 @@ def plot_euclidian_distance_by_primary(data:DataContainer|tuple[dict[str,np.ndar
 
 def plot_euclidian_distance_by_pdg(data:DataContainer|tuple[dict[str,np.ndarray],PGunEvent],
                 show:bool=True,
-                savefig_path:str=None,
+                savefig_path:str|None=None,
                 particles_to_consider_pdg:list[int]=[-11,11,22, -13, 13, 2112, 2212, 211, -211],
                 include_pdg_0:bool=True,
                 mom:bool=False,
@@ -571,7 +649,7 @@ def plot_euclidian_distance_by_pdg(data:DataContainer|tuple[dict[str,np.ndarray]
         
     
     if savefig_path is not None:
-        fig.savefig(savefig_path,dpi=delfault_dpi)
+        fig.savefig(savefig_path,dpi=default_dpi)
     
     if show:
         fig.show()
@@ -585,7 +663,7 @@ def _get_perf(data:DataContainer,
               mom:bool=False,
               **kwargs):
     
-    perfs=[[],[]]
+    perfs=[[],[],[]]
     for k in tqdm.tqdm(range(len(indexes)),desc="Computing performances",disable=(not show_progress_bar)):
         if indexes[k].any():
             if not mom:
@@ -593,10 +671,15 @@ def _get_perf(data:DataContainer,
             else:
                 eucl=data.m_euclidian_distance[indexes[k]]
             perfs[0].append(np.mean(eucl))
-            perfs[1].append(np.quantile(eucl,q=0.95))
+            perfs[1].append(np.quantile(eucl,q=0.68))
+            if not mom:
+                perfs[2].append(np.quantile(eucl,q=0.95))
+            else:
+                perfs[2].append(100*(eucl>90).mean()) # fraction of misaligned
         else:
             perfs[0].append(np.nan)
             perfs[1].append(np.nan)
+            perfs[2].append(np.nan)
     return perfs
 
 
@@ -608,13 +691,21 @@ def _plot_perf_dist(data:DataContainer,
                     Nbins:int=100,
                     model_name:str='',
                     show:bool=True,
-                    savefig_path:str=None,
+                    savefig_path:str|None=None,
                     color_list:list[str]=color_list,
                     y_log_scale:bool=y_log_scale,
-                    figsize:tuple[float]=(16,12),
-                    use_log_scale=use_log_scale,
+                    y_lims:tuple[float,float]|None=None,
+                    y_ticks_major:np.ndarray|None=None,
+                    y_ticks_minor:np.ndarray|None=None,
+                    x_ticks_major:np.ndarray|None=None,
+                    x_ticks_minor:np.ndarray|None=None,
+                    figsize:tuple[float,float]=(16,12),
+                    use_log_scale:bool=use_log_scale,
                     mom:bool=False,
-                    x_label:str=None,
+                    x_label:str|None=None,
+                    show_title:bool=True,
+                    show_support:bool=True,
+                    dpi:float=default_dpi,
                     **kwargs):
     
     if x_label is None:
@@ -628,29 +719,58 @@ def _plot_perf_dist(data:DataContainer,
     
     perf=_get_perf(data,indexes,mom=mom,**kwargs)
     
-    fig,ax=plt.subplots(figsize=figsize, facecolor="white")
-    ax2=ax.twinx()
-    ax2.hist(features, bins=bins, alpha=0.3, label="Support")
+    fig,ax=plt.subplots(figsize=figsize, facecolor="white",dpi=dpi)
     
-    ax.plot(bins[:-1],perf[0],label="Mean",  color=color_list[3], marker="^")
-    ax.plot(bins[:-1],perf[1],label="q=95%", color=color_list[4], marker="+")
+    if show_support:
+        ax2=ax.twinx()
+        ax2.hist(features, bins=bins, alpha=0.3, label="Support")
+        ax2.set_ylabel('Support')
+        # ax2.legend(loc="lower right")
+        if y_log_scale:
+            ax2.set_yscale('log')
+    
+    ax.plot((bins[:-1]+bins[1:])/2,perf[0],label="Mean",  color=color_list[3], marker="o")
+    ax.plot((bins[:-1]+bins[1:])/2,perf[1],label="68%", color=color_list[4], marker="s")
+    if not mom:
+        ax.plot((bins[:-1]+bins[1:])/2,perf[2],label="95%", color=color_list[5], marker="^")
+    if mom and not show_support:
+        ax2=ax.twinx()
+        ax2.plot((bins[:-1]+bins[1:])/2,perf[2],label="Wrong direction rate", color=color_list[5], marker="^")
+        ax2.set_ylabel("Wrong direction fraction (%)")
+        if y_lims is not None:
+            ax2.set_ylim(y_lims)
+        if y_ticks_major is not None:
+            ax2.set_yticks(y_ticks_major,major=True)
+        if y_ticks_minor is not None:
+            ax2.set_yticks(y_ticks_minor,minor=True)
+        # ax2.legend(loc="lower right")
+        
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
     ax.set_xscale('log' if use_log_scale else 'linear')
-    # ax.set_ylim(0.,1.)
-    # ax.set_xlim(lims)
-
-    ax2.set_ylabel('Support')
-    if y_log_scale:
-        ax2.set_yscale('log')
     
+    if y_lims is not None:
+        ax.set_ylim(y_lims)
+    ax.set_xlim(lims)
+    
+    if y_ticks_major is not None:
+        ax.set_yticks(y_ticks_major,major=True)
+    if y_ticks_minor is not None:
+        ax.set_yticks(y_ticks_minor,minor=True)
+    if x_ticks_major is not None:
+        ax.set_xticks(x_ticks_major,major=True)
+    if x_ticks_minor is not None:
+        ax.set_xticks(x_ticks_minor,minor=True)
 
-    ax.set_title(f'Euclidian distance between truth and prediction depending on the {feature_name} for model {model_name}')
-    ax.legend()
-    ax2.legend(loc="lower right")
+    
+    if show_title:
+        ax.set_title(f'Euclidian distance between truth and prediction depending on the {feature_name} for model {model_name}')
+    # ax.legend()
 
+    fig.legend(bbox_to_anchor=(0.9,0.85))
+    
     if savefig_path is not None:
-        fig.savefig(savefig_path,dpi=delfault_dpi)
+        fig.savefig(savefig_path,dpi=dpi)
         
     if show:
         fig.show()
@@ -663,7 +783,7 @@ def plot_perf_charge(data:DataContainer,
                     Nbins:int=100,
                     model_name:str='',
                     show:bool=True,
-                    savefig_path:str=None,
+                    savefig_path:str|None=None,
                     mom:bool=False,
                     **kwargs):
     
@@ -685,7 +805,7 @@ def plot_perf_distance(data:DataContainer,
                     Nbins:int=100,
                     model_name:str='',
                     show:bool=True,
-                    savefig_path:str=None,
+                    savefig_path:str|None=None,
                     mom:bool=False,
                     **kwargs):
     
@@ -704,17 +824,17 @@ def plot_perf_distance(data:DataContainer,
     
 
 def plot_perf_traj_length(data:DataContainer,
-                    x_lim_dist:tuple[float,float]=(20.,1020.),
+                    x_lim_traj:tuple[float,float]=(20.,1020.),
                     Nbins:int=100,
                     model_name:str='',
                     show:bool=True,
-                    savefig_path:str=None,
+                    savefig_path:str|None=None,
                     mom:bool=False,
                     **kwargs):
     
     return _plot_perf_dist(data=data,
                     features=data.traj_length,
-                    lims=x_lim_dist,
+                    lims=x_lim_traj,
                     feature_name="trajectory length",
                     xlabel="Trajectory length (mm)",
                     Nbins=Nbins,
@@ -730,7 +850,7 @@ def plot_perf_kin_ener(data:DataContainer,
                     Nbins:int=100,
                     model_name:str='',
                     show:bool=True,
-                    savefig_path:str=None,
+                    savefig_path:str|None=None,
                     mom:bool=False,
                     **kwargs):
     
@@ -750,9 +870,9 @@ def plot_perf_kin_ener(data:DataContainer,
 def plots(data:DataContainer|tuple[dict,PGunEvent],
           plots_chosen:list[str]=["pred_X","euclidian_distance","euclidian_distance_by_pdg","perf_charge","perf_distance"],
         show:bool=True,
-        savefig_path:str=None,
+        savefig_path:str|None=None,
         model_name:str='',
-        mode:str=None,
+        mode:str|None=None,
         **kwargs):
     
     if (not data.__class__.__name__=="DataContainer"): # if the data is not a DataContainer, it must be the input of the class to construct the object
@@ -764,11 +884,11 @@ def plots(data:DataContainer|tuple[dict,PGunEvent],
         
     elif data.momentum_is_available and mode=='mom_d':
         args_['mom']=True
-        args_['x_unit']="rad"
-        args_['x_range']=(0,np.pi)
-        args_['x_label']="Angle between true and predicted momentum directions (rad)"
+        args_['x_unit']="°"
+        args_['x_range']=(0,180)
+        args_['x_label']="Angle between true and predicted momentum directions (°)"
         args_['ax_title']="Distribution of the angle between predicted and true momenta"
-        print(f"Fraction of wrong direction: {100*(1-np.searchsorted(np.sort(data.md_distance),v=np.pi/2,side='right')/len(data.md_distance)):.2f}%")
+        print(f"Fraction of wrong direction: {100*(1-np.searchsorted(np.sort(data.md_distance),v=90,side='right')/len(data.md_distance)):.2f}%")
         data.m_euclidian_distance=data.md_distance
         data.recon_m_euclidian_distance=data.recon_md_distance
         
@@ -803,3 +923,98 @@ def plots(data:DataContainer|tuple[dict,PGunEvent],
     
     
     return figs
+
+
+def get_input_particle(data:DataContainer,
+                       i:int) -> str:
+    
+    indexes=data.mask*(data.event_id==i)
+    try:
+        return particle_dict[int(data.input_particle[indexes].mean())]
+    except KeyError:
+        return str(np.unique(data.input_particle[indexes].astype(int)))
+
+
+
+def list_index_input_particle(data:DataContainer,
+                                input_particle:str|list[str],
+                                imax:int|None=None) -> list[int]:
+    if imax is None:
+        imax=len(data)
+    I=[]
+    
+    if isinstance(input_particle,str):
+        for i in range(imax):
+            if get_input_particle(data,i)==input_particle:
+                I.append(i)
+    elif isinstance(input_particle,list):
+        for i in range(imax):
+            if get_input_particle(data,i) in input_particle:
+                I.append(i)
+    else:
+        raise ValueError("Input particle must be a string or a list of strings")
+    return I
+
+
+
+# def list_index_vertex_contained(data:DataContainer,
+#                                 fiducial_box:np.ndarray=(RANGES[:,1]-RANGES[:,0])/4,
+#                                 imax:int|None=None) -> list[int]:
+#     if imax is None:
+#         imax=len(data)
+#     I=[]
+    
+#     for i in range(imax):
+#         verPos = get_vertex_position(data,i)
+#         if (np.abs(verPos-ORIGIN)<fiducial_box).all():
+#             I.append(i)
+#     return I
+
+
+def list_index_number_hits(data:DataContainer,
+                           min_number_hits:int|None=400,
+                           max_number_hits:int|None=None,
+                           imax:int|None=None) -> list[int]:
+    if imax is None:
+        imax=len(data)
+    
+    if min_number_hits is None:
+        min_number_hits=0
+        
+    if max_number_hits is None:
+        max_number_hits=10000
+        
+    I=[]
+    
+    for i in range(imax):
+        indexes=data.mask*(data.event_id==i)
+        if min_number_hits<=indexes.sum()<=max_number_hits:
+            I.append(i)
+    return I
+
+
+def list_index_NTraj(data:DataContainer,
+                           min_NTraj:int|None=4,
+                           max_NTraj:int|None=None,
+                           imax:int|None=None) -> list[int]:
+    if imax is None:
+        imax=len(data)
+    
+    if min_NTraj is None:
+        min_NTraj=0
+        
+    if max_NTraj is None:
+        max_NTraj=1000
+        
+    I=[]
+    
+    for i in range(imax):
+        indexes=data.mask*(data.event_id==i)
+        if ((min_NTraj<=data.NTraj[indexes])*(data.NTraj[indexes]<=max_NTraj)).all():
+            I.append(i)
+    return I
+
+
+
+def intersect_list_indexes(lists_indexes:list[list[int]]) -> list[int]:
+    return list(set.intersection(*map(set, lists_indexes)))

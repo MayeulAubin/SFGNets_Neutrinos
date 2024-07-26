@@ -1419,7 +1419,7 @@ def test_dirScale(ret_dict:dict,
         dirScale=dirScales[l]
         
         
-        charge_pred,mom_pred,curv_pred,points_pred=charge_and_momentum_fit(ret_dict=ret_dict,
+        _,mom_pred,_,_,_=charge_and_momentum_fit(ret_dict=ret_dict,
                                                                             values=values,
                                                                             show_progressbar=False,
                                                                             N=N,
@@ -1459,20 +1459,21 @@ def test_curvScale(ret_dict:dict,
                 min_curvScale:float=5.,
                 max_curvScale:float=500.,
                 num_points:int=100,
-                **kwargs) -> tuple[np.ndarray,np.ndarray,np.ndarray,np.ndarray]:
+                **kwargs) -> tuple[np.ndarray,np.ndarray]:
         
         
     curvScales = np.linspace(min_curvScale,max_curvScale,num_points)
-    Prec=[]
-    Rec=[]
-    F1=[]
+    # Prec=[]
+    # Rec=[]
+    # F1=[]
+    Acc=[]
     
     for l in tqdm.tqdm(range(len(curvScales)),desc="Testing the curv scales",leave=True,position=0):
         
         curvScale=curvScales[l]
         
         
-        charge_pred,mom_pred,curv_pred,points_pred=charge_and_momentum_fit(ret_dict=ret_dict,
+        charge_pred,_,_,_,_=charge_and_momentum_fit(ret_dict=ret_dict,
                                                                             values=values,
                                                                             show_progressbar=False,
                                                                             N=N,
@@ -1482,15 +1483,18 @@ def test_curvScale(ret_dict:dict,
                                                                             **kwargs)
         
         len_=charge_pred.shape[0]
-        prec_,rec_,f1_,_=precision_recall_fscore_support(y_true=np.round(ret_dict['true_charge'][:len_]).astype(int),
-                                         y_pred=np.round(charge_pred).astype(int),
-                                         average='weighted',
-                                         zero_division=0.)
-        Prec.append(prec_)
-        Rec.append(rec_)
-        F1.append(f1_)
+        # prec_,rec_,f1_,_=precision_recall_fscore_support(y_true=np.round(ret_dict['true_charge'][:len_]).astype(int),
+        #                                  y_pred=np.round(charge_pred).astype(int),
+        #                                  average='weighted',
+        #                                  zero_division=0.)
+        # Prec.append(prec_)
+        # Rec.append(rec_)
+        # F1.append(f1_)
+        Acc.append((ret_dict['true_charge'][:len_].astype(int)==charge_pred.astype(int)).mean())
         
-    return curvScales,np.array(Prec),np.array(Rec),np.array(F1)
+    # return curvScales,np.array(Prec),np.array(Rec),np.array(F1)
+    return curvScales,Acc
+    
 
 
 def optimize_smoothing_parameters_gpu(ret_dict:dict,

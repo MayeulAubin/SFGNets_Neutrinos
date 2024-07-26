@@ -1,0 +1,23 @@
+/t2k/control baseline-2022 1.0
+/t2k/update
+/gps/verbose 0
+/process/verbose 0
+/event/verbose 0
+/particle/verbose 0
+
+
+# Remove previous sources and ensure that one source at a time is generated
+/gps/source/clear
+/gps/source/multiplevertex false
+
+
+# Adds a particle with unit intensity (proton)
+/gps/source/add 1
+/gps/particle proton
+
+# Uniform energy distribution between 0 and 1.5 GeV for proton
+/gps/ene/type Lin
+/gps/ene/min 0 GeV
+/gps/ene/max 1.5 GeV
+/gps/ene/intercept 1
+/gps/ene/gradient 0

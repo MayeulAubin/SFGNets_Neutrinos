@@ -1,0 +1,19 @@
+
+# Isotropic directions
+/gps/ang/type iso
+
+# Uniformely positionned in SFG detector
+/gps/pos/type Volume
+/gps/pos/shape Para
+/gps/pos/centre 0 30 -1943.94 mm
+/gps/pos/halfx 985.92 mm
+/gps/pos/halfy 287.56 mm
+/gps/pos/halfz 944.84 mm
+
+
+/generator/add
+
+# saves all trajectory points simulated by Geant4 (i.e. steps of propagation in the detector).
+/db/set/trajectoryPointCriterion -1 -1 0 MeV
+
+# Number of events to be generated
