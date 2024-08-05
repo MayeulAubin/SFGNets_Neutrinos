@@ -2,11 +2,12 @@
 import re
 import torch
 from torch.utils.data import Dataset, DataLoader, random_split
+from torch import Tensor
 import numpy as np
 from .constants import RANGES, CUBE_SIZE
 
 
-def natural_sort(l:list):
+def natural_sort(l:list[str]) -> list[str]:
     """
     Perform a natural sort on the given list.
 
@@ -69,7 +70,7 @@ def filtering_events(x:dict) -> bool:
 
 
 
-def collate_default(batch):
+def collate_default(batch:list[dict[str,Tensor]]) -> dict[str,Tensor]:
     """
     Custom collate function for Sparse Minkowski network.
 
@@ -94,7 +95,24 @@ def split_dataset(dataset:Dataset,
                   seed:int=7,
                   multi_GPU:bool=False,
                   num_workers:int=24,
-                  collate=collate_default,):
+                  collate=collate_default,) -> tuple[DataLoader,DataLoader,DataLoader]:
+    """
+    Create training, validation and test data loaders based on a dataset and a collate function.
+    
+    Parameters:
+    - dataset: Dataset, the dataset to split
+    - batch_size: int, the batch size for DataLoader
+    - train_fraction: float, the fraction of the dataset for training
+    - val_fraction: float, the fraction of the dataset for validation
+    - seed: int, the seed for the random split
+    - multi_GPU: bool, whether to use multi-GPU for data loading
+    - num_workers: int, the number of workers for DataLoader
+    - collate: function, the aggregation function for creating a batch from a list of data elements
+    
+    Returns:
+    - tuple, (train_loader, valid_loader, test_loader)
+    """
+    
 
     # Get the length of the dataset
     fulllen = len(dataset)
@@ -142,7 +160,20 @@ def full_dataset(dataset:Dataset,
                   multi_GPU=False,
                   num_workers=24,
                   collate=collate_default,
-                 ):
+                 ) -> DataLoader:
+    """
+    Create a data loader for a full dataset. Used when the dataset is a test dataset to have a single test data loader.
+    
+    Parameters:
+    - dataset: Dataset, the dataset to turn into a data loader
+    - batch_size: int, the batch size for DataLoader
+    - multi_GPU: bool, whether to use multi-GPU
+    - num_workers: int, the number of workers for DataLoader
+    - collate: function, the aggregation function for creating a batch from a list of data elements
+    
+    Returns:
+    - DataLoader, a DataLoader for the full dataset
+    """
     
     if multi_GPU:
         full_loader = DataLoader(

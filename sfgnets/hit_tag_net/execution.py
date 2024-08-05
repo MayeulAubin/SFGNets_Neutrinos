@@ -5,13 +5,14 @@ import numpy as np
 import math
 import os
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from warmup_scheduler_pytorch import WarmUpScheduler
 from sklearn.metrics import precision_recall_fscore_support
 from scipy.special import softmax
 
 from .model import device
-from .dataset import arrange_sparse_minkowski, arrange_truth, arrange_aux, collate_sparse_minkowski, split_dataset
+from .dataset import arrange_sparse_minkowski, arrange_truth, arrange_aux, collate_sparse_minkowski, split_dataset, SparseEvent
 
 
 
@@ -26,7 +27,24 @@ def train(model:torch.nn.Module,
           device:torch.device=device, 
           progress_bar:bool=False,
           benchmarking:bool=False,
-          world_size:int=1,):
+          world_size:int=1,) -> float:
+    """
+    Runs the training loop once over the dataset.
+    
+    Parameters:
+    - model: torch.nn.Module, the neural network model to train
+    - loader: DataLoader, the training data loader that provides the data to train on
+    - optimizer: torch.optim.Optimizer, the optimizer to use for training
+    - warmup_scheduler: WarmUpScheduler, the scheduler to use for warming-up the learning rate in the firsts epochs
+    - loss_func: torch.nn.Module, the loss function to use for training
+    - device: torch.device, the device to run the training on
+    - progress_bar: bool, whether to display a progress bar
+    - benchmarking: bool, whether to benchmark the training loop by printing the execution times of each step
+    - world_size: int, the number of processes participating in the training (for distributed training, multi GPU)
+    
+    Returns:
+    - average_loss: float, the average loss over the training loop
+    """
     
     
     model.train()
@@ -75,16 +93,35 @@ def train(model:torch.nn.Module,
 
 
 
-# Testing function
+# Validation function
 def test(model:torch.nn.Module,
           loader:DataLoader,
-          optimizer:torch.optim.Optimizer,
-          warmup_scheduler:WarmUpScheduler,
+          optimizer:torch.optim.Optimizer|None=None,
+          warmup_scheduler:WarmUpScheduler|None=None,
           loss_func:torch.nn.Module=nn.CrossEntropyLoss(),
           device:torch.device=device, 
           progress_bar:bool=False,
           benchmarking:bool=False,
           world_size:int=1,):
+    """
+    Runs the validation loop once over the dataset.
+    
+    Parameters:
+    - model: torch.nn.Module, the neural network model to validate
+    - loader: DataLoader, the validation data loader that provides the data to validate on
+    - optimizer: torch.optim.Optimizer, the optimizer (not used, there so that the test and train function have the same parameters)
+    - warmup_scheduler: WarmUpScheduler, the warm-up scheduler (not used, there so that the test and train function have the same parameters)
+    - loss_func: torch.nn.Module, the loss function to use for validation
+    - device: torch.device, the device to run the validation on
+    - progress_bar: bool, whether to display a progress bar
+    - benchmarking: bool, whether to benchmark the training loop by printing the execution times of each step
+    - world_size: int, the number of processes participating in the validation (for distributed validation, multi GPU)
+    
+    Returns:
+    - predictions: np.ndarray, the predictions of the model over the batch
+    - targets: np.ndarray, the targets over the batch
+    - average_loss: float, the average loss over the validation loop
+    """
     
     model.eval()
     
@@ -101,7 +138,6 @@ def test(model:torch.nn.Module,
     
     for i, data in test_loop:
         time_load+=time.perf_counter()-t0
-        optimizer.zero_grad()
         
         t0=time.perf_counter()
         # Arrange input, output, and target
@@ -140,12 +176,12 @@ def ddp_setup(rank, world_size):
     torch.cuda.set_device(rank)
 
 
-def training(device,
-            model,
-            dataset,
-            optimizer,
-            warmup_scheduler,
-            loss_func,
+def training(device: torch.device,
+            model:nn.Module,
+            dataset:SparseEvent,
+            optimizer:torch.optim.Optimizer,
+            warmup_scheduler:WarmUpScheduler,
+            loss_func:nn.Module,
             batch_size:int = 256,
             train_fraction:float=0.8,
             val_fraction:float=0.19,
@@ -157,7 +193,38 @@ def training(device,
             benchmarking:bool =False,
             multi_GPU:bool=False,
             world_size:int=1,
-            save_model_path:str|None=None,):
+            save_model_path:str|None=None,) -> dict[str,list[float]]:
+    """
+    Trains and validates a neural network for the Hit tagging task. Runs the epochs loop.
+    
+    Parameters:
+    - device: torch.device, the device to run the training on
+    - model: nn.Module, the neural network model to train and validate
+    - dataset: SparseEvent, the dataset to train and validate on
+    - optimizer: torch.optim.Optimizer, the optimizer to use for training
+    - warmup_scheduler: WarmUpScheduler, the scheduler to use for warming-up the learning rate in the firsts epochs
+    - loss_func: torch.nn.Module, the loss function to use for training and validation
+    - batch_size: int, the batch size for training and validation
+    - train_fraction: float, the fraction of the dataset to use for training
+    - val_fraction: float, the fraction of the dataset to use for validation
+    - seed: int, the random seed for reproducibility
+    - epochs: int, the number of epochs to train (the epoch loop can stop before reaching this number)
+    - stop_after_epochs: int, the maximum number of epochs without improvements of the validation loss before the training is stopped
+    - progress_bar: bool, whether to display the epoch loop progress bar
+    - sub_progress_bars: bool, whether to display the sub-progress bars for training and validation loops
+    - benchmarking: bool, whether to benchmark the training and validation loops by printing the execution times of each step
+    - multi_GPU: bool, whether to run the training on several GPUs (distributed training)
+    - world_size: int, the number of processes participating (in case of multi_GPU)
+    - save_model_path: str, the file path to save the model weights
+    
+    Returns:
+    - training_loss: list[float], the average losses of each training loop of each epoch
+    - validation_loss: list[float], the average losses of each validation loop of each epoch
+    - precision: list[float], the macro average precision of the model on the validation data
+    - recall: list[float], the macro average recall of the model on the validation data
+    - f1_score: list[float], the macro average f1 score of the model on the validation data
+    - learning_rate: list[float], the learning rate after each training loop
+    """
         
     # creates the data loaders
     train_loader, valid_loader, test_loader=split_dataset(dataset,
@@ -303,7 +370,23 @@ def training(device,
 def test_full(loader:DataLoader,
               model:torch.nn.Module,
               progress_bar:bool=False,
-              device=device):
+              device:torch.device=device) -> dict[str,list[np.ndarray]|None]:
+    """
+    Test a neural network model on a given test set for the Hit tagging task.
+    
+    Parameters:
+    - loader: DataLoader, the test data loader
+    - model: torch.nn.Module, the neural network model to be tested
+    - progress_bar: bool, whether to display a progress bar
+    - device: torch.device, the device on which to run the model
+    
+    Returns:
+    - predictions: list[np.ndarray], the predictions of the model on the test data
+    - f: list[np.ndarray], the features of the test data
+    - coord: list[np.ndarray], the coordinates of the test data
+    - y: list[np.ndarray], the targets of the test data
+    - aux: list[np.ndarray]|None, the auxiliary variables of the test data
+    """
     
     model.eval()
     

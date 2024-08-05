@@ -11,6 +11,11 @@ from .utils import natural_sort
 
 
 class EventDataset(Dataset, metaclass=ABCMeta):
+    """
+    Data class representing a list of hits inside SFGD constituing an event. Each hit has features 'x', targets 'y', coordinates 'c' and auxiliary variables 'aux'.
+    The data is stored as numpy arrays (one per aforementioned variables), which rows correspond to hits. The arrays are saved into a numpy 'npz' file, one per event.
+    Only the directory in which the files are stored is necessary.
+    """
     
     def __init__(self, 
                  root:str, 
@@ -27,6 +32,7 @@ class EventDataset(Dataset, metaclass=ABCMeta):
         - shuffle: bool, whether to shuffle data_files
         - multi_pass: int, how many times should the files be gone through, to allow better performance when multi_GPU by reducing the number of epochs accordingly
         - files_suffix: str, the file type to load ('npz', 'pk', ...)
+        - filtering_func: function, function to filter the indexes of the arrays in the data file
         '''
         
         self.variables=['x','y','c','aux']
@@ -44,34 +50,37 @@ class EventDataset(Dataset, metaclass=ABCMeta):
         self.filtering_func=filtering_func
     
     @property
-    def processed_dir(self):
+    def processed_dir(self) -> str:
         return f'{self.root}'
 
     @property
-    def processed_file_names(self):
+    def processed_file_names(self) -> list[str]:
         return natural_sort(glob(f'{self.processed_dir}/*.{self.files_suffix}'))
     
-    def __len__(self):
+    def __len__(self) -> int:
         return self.total_events*self.multi_pass
     
     @abstractmethod
-    def getx(self,data:npyio.NpzFile):
+    def getx(self,data:npyio.NpzFile) -> None|np.ndarray:
         return None
     
     @abstractmethod
-    def gety(self,data:npyio.NpzFile):
+    def gety(self,data:npyio.NpzFile) -> None|np.ndarray:
         return None
     
     @abstractmethod
-    def getc(self,data:npyio.NpzFile):
+    def getc(self,data:npyio.NpzFile) -> None|np.ndarray:
         return None
     
     @abstractmethod
-    def getaux(self,data:npyio.NpzFile):
+    def getaux(self,data:npyio.NpzFile) -> None|np.ndarray:
         return None
     
 
-    def __getitem__(self, idx:int):
+    def __getitem__(self, idx:int) -> dict[str,None|np.ndarray]:
+        """
+        Returns a dictionary corresponding to the data of the event of index idx
+        """
         
         # Load data from the file
         data = np.load(self.data_files[idx%self.total_events])
@@ -108,7 +117,10 @@ class EventDataset(Dataset, metaclass=ABCMeta):
     
     def all_data(self,
                  progress_bar:bool=True,
-                 max_index:int|None=None,):
+                 max_index:int|None=None,) -> dict[str,None|np.ndarray]:
+        """
+        Returns all data concatenated into single arrays (no separation between events).
+        """
         
         if max_index is None:
             max_index=len(self)
@@ -131,5 +143,5 @@ class EventDataset(Dataset, metaclass=ABCMeta):
         return return_dict
     
     @property
-    def data(self):
+    def data(self) -> dict[str,None|np.ndarray]:
         return self.all_data(progress_bar=False)

@@ -5,6 +5,7 @@ import torch
 from glob import glob
 import MinkowskiEngine as ME
 from numpy.lib import npyio
+from torch import Tensor
 
 from ..datasets.dataclass import EventDataset
 from ..datasets.constants import RANGES, CUBE_SIZE
@@ -13,7 +14,7 @@ from ..datasets.utils_minkowski import arrange_sparse_minkowski, arrange_truth, 
 
 
 
-def collate_sparse_minkowski(batch:list[dict]) -> dict:
+def collate_sparse_minkowski(batch:list[dict[str,Tensor]]) -> dict[str,Tensor]:
     """
     Custom collate function for Sparse Minkowski network.
 
@@ -83,6 +84,10 @@ def retag_cut(cut:float):
 
 
 class SparseEvent(EventDataset):
+    """
+    Data class representing events in SFGD for the Hit Tagging task.
+    """
+    
     def __init__(self, 
                  root:str, 
                  shuffle:bool=False, 
@@ -130,7 +135,7 @@ class SparseEvent(EventDataset):
             self.retagging=False
         
     
-    def getx(self,data):
+    def getx(self,data:npyio.NpzFile) -> Tensor|None:
         # Extract raw data
         x_0 = data['x']  # HitTime, HitCharge
         
@@ -159,7 +164,7 @@ class SparseEvent(EventDataset):
         return torch.FloatTensor(x)
     
     
-    def getc(self,data:npyio.NpzFile):
+    def getc(self,data:npyio.NpzFile) -> Tensor|None:
         c = data['c']  # 3D coordinates (cube raw positions)
         
         if c.shape[0]==0:
@@ -177,12 +182,12 @@ class SparseEvent(EventDataset):
         
         return torch.FloatTensor(c)
     
-    def gety(self,data:npyio.NpzFile):
+    def gety(self,data:npyio.NpzFile) -> Tensor:
         if self.retagging:
             return torch.LongTensor(self.retagging_func(data))
         return torch.LongTensor(data['y'] - 1)
     
-    def getaux(self,data:npyio.NpzFile):
+    def getaux(self,data:npyio.NpzFile) -> Tensor|None:
         if self.aux:
             pdg=data['pdg']
             reaction_code=int(data['reaction_code'])*np.ones_like(pdg)

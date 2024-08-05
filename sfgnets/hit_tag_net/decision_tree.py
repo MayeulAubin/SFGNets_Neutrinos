@@ -1,6 +1,7 @@
 import numpy as np
 import sklearn as sk
 from sklearn import tree
+from numpy.lib import npyio
 
 from ..datasets.dataclass import EventDataset
 
@@ -69,7 +70,7 @@ class HitTagTreeDataset(EventDataset):
         return x # hit charge and distance to vertex
     
     
-    def getc(self,data:np.lib.npyio.NpzFile):
+    def getc(self,data:npyio.NpzFile):
         c = data['c']  # 3D coordinates (cube raw positions)
         
         if c.shape[0]==0:
@@ -77,10 +78,10 @@ class HitTagTreeDataset(EventDataset):
         
         return c
     
-    def gety(self,data:np.lib.npyio.NpzFile):
+    def gety(self,data:npyio.NpzFile):
         return data['y'] - 1
     
-    def getaux(self,data:np.lib.npyio.NpzFile):
+    def getaux(self,data:npyio.NpzFile):
         # Checking if the aux is defined or not 
         if not hasattr(self, 'aux'):
             print("aux not defined, defaulting to False")

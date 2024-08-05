@@ -31,7 +31,7 @@ def arrange_truth(data:dict,
     - data: dict, dictionary containing 'y' (labels) and 'c' (coordinates) keys
     
     Returns:
-    - features: SparseTensor, sparse tensor containing 'y' (labels) at 'c' (coordinates)
+    - target: SparseTensor, sparse tensor containing 'y' (labels) at 'c' (coordinates)
     """
     if len(data['y'].shape)==2: # checking if the data has already been expanded of one dimension
         y=data['y']
@@ -56,7 +56,7 @@ def arrange_aux(data:dict,
     - data: dict, dictionary containing 'aux' (auxiliary) and 'c' (coordinates) keys
     
     Returns:
-    - features: SparseTensor or None, sparse tensor containing 'aux' (auxiliary) at 'c' (coordinates) if 'aux' is available, else None
+    - aux: SparseTensor or None, sparse tensor containing 'aux' (auxiliary) at 'c' (coordinates) if 'aux' is available, else None
     """
     if data['aux'] is not None:
     
@@ -79,7 +79,7 @@ def arrange_mask(data:dict,
     - data: dict, dictionary containing 'mask' (mask) and 'c' (coordinates) keys
     
     Returns:
-    - features: SparseTensor, sparse tensor containing 'mask' (mask) at 'c' (coordinates)
+    - mask: SparseTensor, sparse tensor containing 'mask' (mask) at 'c' (coordinates)
     """
     
     return ME.SparseTensor(
