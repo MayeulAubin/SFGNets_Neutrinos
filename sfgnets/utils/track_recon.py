@@ -12,10 +12,16 @@ C_SPEED_OF_LIGHT = 2.99792e8 # speed of light in m/s
 DEFAULT_MOM_NORM= 100.
 
 
-def sort_event_from_all_results(all_results:dict) -> dict:
+def sort_event_from_all_results(all_results:dict[str,np.ndarray]) -> dict[str,np.ndarray]:
     """
     Sort the results by event_id, traj_id and hit_order so that they are prepared for further processing.
     Notably it is possible to use choose_direction_sign with mode 'order' thanks to this.
+    
+    Parameters:
+    - all_results: dict[str,np.ndarray], dictionary containing all the unscaled results of the testing of a model (it should be the return of track_fitting_net.execution.measure_performances)
+    
+    Returns:
+    - all_results_sorted: dict[str,np.ndarray], dictionary containing all the unscaled results sorted by event_id, traj_id and hit_order; of the testing of a model
     """
     
     order_index=all_results['aux'][:,[23]].astype(int)
@@ -64,10 +70,18 @@ def sort_event_from_all_results(all_results:dict) -> dict:
     return ret_dict
 
 
-def get_charge(curvature:np.ndarray|torch.Tensor, direction:np.ndarray|torch.Tensor) -> np.ndarray|torch.Tensor|float:
+def get_charge(curvature:np.ndarray|torch.Tensor, 
+               direction:np.ndarray|torch.Tensor) -> np.ndarray|torch.Tensor|float:
     """
     Computes the charge from the curvature and direction given the fixed magnetic B field.
-    Definition from Curvature_to_MomentumAndCharge
+    Definition from Curvature_to_MomentumAndCharge.
+    
+    Parameters:
+    - curvature: array-like, shape (...,3), the curvature of the trajectory points (defined as the vector pointing to the center with norm the inverse of the radius of the local fitting circle)
+    - direction: array-like, shape (...,3), the direction of the trajectory points.
+    
+    Returns:
+    - charge: array-like, shape (...,), the charge of the trajectory points. It is positive for right-handed tracks, negative for left-handed tracks, and zero for tracks that are parallel to the magnetic field.
     """
     
     if isinstance(curvature, np.ndarray):
@@ -84,6 +98,13 @@ def get_momentum_magnitude(curvature:np.ndarray|torch.Tensor, direction:np.ndarr
     """
     Computes the momentum magnitude from the curvature and direction given the fixed magnetic B field.
     Definition from Curvature_to_MomentumAndCharge
+    
+    Parameters:
+    - curvature: array-like, shape (...,3), the curvature of the trajectory points (defined as the vector pointing to the center with norm the inverse of the radius of the local fitting circle)
+    - direction: array-like, shape (...,3), the direction of the trajectory points.
+    
+    Returns:
+    - momentum_magnitude: array-like, shape (...,), the momentum magnitude at each trajectory point.
     """
     
     if isinstance(curvature, np.ndarray):
@@ -100,10 +121,18 @@ def _handle_single_hit_cases(same_event_traj_matrix:np.ndarray|torch.Tensor,
                              node_d:np.ndarray|torch.Tensor, 
                              node_c_absolute:np.ndarray|torch.Tensor) -> None|tuple[np.ndarray|torch.Tensor,np.ndarray|torch.Tensor,np.ndarray|torch.Tensor,np.ndarray|torch.Tensor]:
     """
-    Handles cases where an event/trajectory has less than two hits. 
+    Handles cases where an event/trajectory has less than two hits when estimating the direction and curvature.
     If the matrix of hits has only one hit, we return a default value. 
     If the matrix has several hits (but for a given trajectory/event there is only one hit), we allow this hit to reach any other hit of other trajectories/events.
     TODO: in the latter case, we should allow the hit to reach only hits of the same event.
+    
+    Parameters:
+    - same_event_traj_matrix: array-like, shape (n_points, n_points), a matrix indicating which hits belong to the same event and trajectory.
+    - node_d: array-like, shape (n_points, 3), the direction of each trajectory point.
+    - node_c_absolute: array-like, shape (n_points, 3), the absolute coordinate of each trajectory point.
+    
+    Returns:
+    - construct_direction_and_curvature_return: None|tuple, None if the data can be further processed, else default values for pathological cases.
     """
     
     if isinstance(same_event_traj_matrix, np.ndarray):
@@ -150,6 +179,16 @@ def choose_direction_sign(node_c_absolute:np.ndarray|torch.Tensor,
             - 'PCAo': the sign is given by the order of the points: we make sure that on average mean_j(dirorder_{i,j})*mean_j(sign(j-i))=1
             - 'PCAnd': the sign is given by the node_d 
             - 'PCAl': the sign is set so that the directions are consistently pointing in the same direction.
+            
+    Parameters:
+    - node_c_absolute: array-like, shape (n_points, 3), the absolute coordinates of each trajectory point.
+    - matrix_of_differences: array-like, shape (n_points, n_points, 3), the matrix of difference vectors between the points.
+    - weights_for_differences: array-like, shape (n_points, n_points), the weights for the differences for the choice of the direction sign.
+    - node_d: array-like, shape (n_points, 3), the direction of each trajectory point.
+    - mode: str, the mode to determine the order of the points (see above).
+    
+    Returns:
+    - dirorder_matrix: array-like, shape (n_points, n_points), the antisymmetric sign matrix indicating the order of the points relative to each other (+1 if j after i, -1 if before).
     """
     
     
@@ -264,11 +303,23 @@ def _estimate_direction(node_c_absolute:np.ndarray|torch.Tensor,
     """
     Constructs the estimated direction locally, 
     and the direction order matrix that tells whether the other points are after or before along the trajectory path.
-    Returns: direction, dir_order_matrix
     Inspired from sfgRecon -> SFGCreateTrack.hxx : CreateTrackFromClusters 
     Uses a kernel to average the direction locally. The kernel is w_{i,j} = (M_{i,j}/d)*e^{-(M_{i,j}/d)} where d is a scale parameter.
     Can use the information provided by node_d to estimate the direction.
     The parameters are given through args_node_d and args_dir
+    
+    Parameters:
+    - node_c_absolute: array-like, shape (n_points, 3), the absolute coordinates of each trajectory point.
+    - matrix_of_differences: array-like, shape (n_points, n_points, 3), the matrix of difference vectors between the points.
+    - matrix_of_distances: array-like, shape (n_points, n_points), the symmetric positive matrix of the distances between the points.
+    - node_d: array-like, shape (n_points, 3), the direction of each trajectory point.
+    - args_node_d: dict, dictionary containing parameters for node_d usage.
+    - args_dir: dict, dictionnary containing parameters for the estimation of the direction from the trajectory points coordinates.
+    - mode: str, the mode for the estimation of the direction sign ('order', 'node_d', 'PCAo', 'PCAnd')
+    
+    Returns:
+    - estimated_direction: array-like, shape (n_points, 3), the estimated direction of each trajectory point.
+    - dirorder_matrix: array-like, shape (n_points, n_points), the antisymmetric sign matrix indicating the order of the points relative to each other (+1 if j after i, -1 if before).
     """
     
     if isinstance(node_c_absolute, np.ndarray):
@@ -343,8 +394,19 @@ def _shift_points_along_trajectory(node_c_absolute:np.ndarray|torch.Tensor,
                                    args_dir:dict[str,float],
                                    ) -> np.ndarray|torch.Tensor:
     """
-    Translate the points positions so that they fall on the trajectory line.
+    Translate the points positions so that they fall on the trajectory line provided by the estimated directions.
     To do that we translate them orthogonally to their direction towards the local average position.
+    
+    Parameters:
+    - node_c_absolute: array-like, shape (n_points, 3), the absolute coordinates of each trajectory point.
+    - direction: array-like, shape (n_points, 3), the estimated direction of each trajectory point.
+    - same_event_traj_matrix: array-like, shape (n_points, n_points), the boolean matrix indicating which points are in the same event and trajectory.
+    - matrix_of_differences: array-like, shape (n_points, n_points, 3), the matrix of difference vectors between the points.
+    - matrix_of_distances: array-like, shape (n_points, n_points), the symmetric positive matrix of the distances between the points.
+    - args_dir: dict, dictionnary containing parameters for the estimation of the direction from the trajectory points coordinates.
+    
+    Returns:
+    - points_updated: array-like, shape (n_points, 3), the updated absolute coordinates of each trajectory point.
     """
     
     if isinstance(node_c_absolute, np.ndarray):
@@ -389,22 +451,28 @@ def _shift_points_along_trajectory(node_c_absolute:np.ndarray|torch.Tensor,
 
 
 
-def _estimate_curvature(node_d:np.ndarray|torch.Tensor|None,
-                        direction:np.ndarray|torch.Tensor,
+def _estimate_curvature(direction:np.ndarray|torch.Tensor,
                         dir_order_matrix:np.ndarray|torch.Tensor,
                         matrix_of_differences:np.ndarray|torch.Tensor,
                         matrix_of_distances:np.ndarray|torch.Tensor,
-                        args_node_d:dict[str,float],
                         args_curv:dict[str,float],
                         ) -> np.ndarray|torch.Tensor :
     """
     Constructs the locally estimated curvature.
-    Returns: curvature
     Inspired from sfgRecon -> SFGCreateTrack.hxx : CreateTrackFromClusters 
     Uses a kernel to estimate the curvature locally. The kernel is w_{i,j} = (M_{i,j}/d)*e^{-(M_{i,j}/d)}*inclusion_weight_{i,j} where d is a scale parameter
     Uses an inclusion_weight to enforce the approximation requirements of the estimation.
-    Can use the information provided by node_d to estimate the direction.
-    The parameters are given through args_node_d and args_curv
+    The parameters are given through args_curv.
+    
+    Parameters:
+    - direction: array-like, shape (n_points, 3), the estimated direction of each trajectory point.
+    - dir_order_matrix: array-like, shape (n_points, n_points), the antisymmetric sign matrix indicating the order of the points relative to each other (+1 if j after i, -1 if before).
+    - matrix_of_differences: array-like, shape (n_points, n_points, 3), the matrix of difference vectors between the points.
+    - matrix_of_distances: array-like, shape (n_points, n_points), the symmetric positive matrix of the distances between the points.
+    - args_curv: dict, dictionnary containing parameters for the estimation of the curvature
+    
+    Returns:
+    - curvature: array-like, shape (n_points, 3), the estimated curvature of each trajectory point (defined as the vector pointing to the center with norm the inverse of the radius of the local fitting circle).
     """
     
     
@@ -471,6 +539,7 @@ def trace_ideal_trajectory(s:np.ndarray|torch.Tensor,
     Predicts the ideal trajectory of a particle in the detector (where the magnetic B field is assumed to be along the x axis).
     We assume that the stopping power of the material dE/dX is constant of value K over the trajectory (this could be relaxed to include Bethe-Bloch formula).
     
+    Parameters:
     - s : the (signed) distance (in mm) between the predicted point and the reference point
     - d_x : the fraction of the momentum along the x axis (between 0. and 1.)
     - p_0 : the momentum (in MeV)
@@ -533,6 +602,7 @@ def trace_ideal_direction(s:np.ndarray|torch.Tensor,
     Predicts the ideal direction of the trajectory of a particle in the detector (where the magnetic B field is assumed to be along the x axis).
     We assume that the stopping power of the material dE/dX is constant of value K over the trajectory (this could be relaxed to include Bethe-Bloch formula).
     
+    Parameters:
     - s : the (signed) distance (in mm) between the predicted point and the reference point
     - d_x : the fraction of the momentum along the x axis (between 0. and 1.)
     - p_0 : the momentum (in MeV)
@@ -586,6 +656,7 @@ def trace_simple_trajectory(s:np.ndarray|torch.Tensor,
     Predicts the ideal trajectory of a particle in the detector (where the magnetic B field is assumed to be along the x axis).
     We assume no stopping power (no absorption). The trajectory is a perfect circle/helix.
     
+    Parameters:
     - s : the (signed) distance (in mm) between the predicted point and the reference point
     - d_x : the fraction of the momentum along the x axis (between 0. and 1.)
     - p_0 : the momentum (in MeV)
@@ -642,16 +713,14 @@ def jac_ideal_trajectory(s:np.ndarray|torch.Tensor,
     Give the jacobian matrix of the ideal trajectory with respect to the parameters of the ideal trajectory
     We assume that the stopping power of the material dE/dX is constant of value K over the trajectory (this could be relaxed to include Bethe-Bloch formula).
     
+    Parameters:
     - s : the (signed) distance (in mm) between the predicted point and the reference point
-    - params: the parameters containing the following
-        - d_x : the fraction of the momentum along the x axis (between 0. and 1.)
-        - p_0 : the momentum (in MeV)
-        - K : the stopping power (in MeV/mm)
-        - q : the charge (+1,0,-1)
-        - theta_0 : the angle in the YZ plane of the direction of the momentum at the reference point
-        - x_0 : the offset in the x axis
-        - y_0
-        - z_0
+    - d_x : the fraction of the momentum along the x axis (between 0. and 1.)
+    - p_0 : the momentum (in MeV)
+    - K : the stopping power (in MeV/mm)
+    - q : the charge (+1,0,-1)
+    - theta_0 : the angle in the YZ plane of the direction of the momentum at the reference point
+    - X_0 : the initial position
     
     Returns:
     - points : the 3D coordinates of the predicted trajectory
@@ -730,9 +799,15 @@ def _fit_one_traj_with_scipy(s:np.ndarray,
     Relies on scipy.optimize.curve_fit to fit the parameters of trace_ideal_trajectory.
     Fits 3 different curves (one for each charge +1, 0, -1), and returns the best one.
     Quite slow and sometimes weird results.
+    
+    Parameters:
+    - s : the (signed) distance (in mm) between the predicted point and the reference point
+    - X : the 3D coordinates of the trajectory
+    - guess : initial parameters values
+    - bounds : the bounds for the parameters
+    
     Returns:
     - params: the parameters of the best fit
-    - sigma: the covariance matrix estimated by scipy.optimize.curve_fit
     - err: the average error on the fit
     - X_pred: the predicted points of the ideal trajectory fitted
     """
@@ -829,6 +904,17 @@ def _fit_local_arc_circle(direction:torch.Tensor,
     Fit locally a simple trajectory model to the trajectory points.
     Relies on torch.optim.LBGFS to fit the parameters of trace_simple_trajectory
     The fit is dones locally, meaning that there is one fit per trajectory point.
+    
+    Parameters:
+    - direction: array-like, shape (n_points, 3), the estimated direction of each trajectory point.
+    - dir_order_matrix: array-like, shape (n_points, n_points), the antisymmetric sign matrix indicating the order of the points relative to each other (+1 if j after i, -1 if before).
+    - matrix_of_differences: array-like, shape (n_points, n_points, 3), the matrix of difference vectors between the points.
+    - matrix_of_distances: array-like, shape (n_points, n_points), the symmetric positive matrix of the distances between the points.
+    - args_curv: dict, dictionnary containing parameters for the estimation of the curvature
+    - guess : initial parameters values
+    - bounds : the bounds for the parameters
+     
+    
     Returns:
     - charge: the charge of the particle
     - momentum norm
@@ -955,6 +1041,27 @@ def construct_direction_and_curvature(node_c_absolute:np.ndarray|torch.Tensor,
                                      chargeID_mode:str='curv_estimate',
                                     **kwargs
                                      ) -> tuple[np.ndarray|torch.Tensor, np.ndarray|torch.Tensor, np.ndarray|torch.Tensor, np.ndarray|torch.Tensor]:
+    """
+    Main function to estimate the charge, momentum, direction and curvature of trajectory points.
+    
+    Parameters:
+    - node_c_absolute : array-like, shape (n_points, 3), the absolute coordinates of the trajectory points.
+    - node_d : array-like, shape (n_points, 3), a first prediction of directions of the trajectory points (useful notably for choosing the direction sign).
+    - event_id : array-like, shape (n_points,), the event ID of the trajectory points (to group points per event)
+    - traj_ID : array-like, shape (n_points,), the trajectory ID of the trajectory points (to group points per trajectory)
+    - args_node_d: dict, dictionary containing parameters for node_d usage in direction estimation (not used by default)
+    - args_dir: dict, dictionnary containing parameters for the estimation of the direction from the trajectory points coordinates.
+    - args_curv: dict, dictionnary containing paramters for the estimation of the curvature.
+    - mode: str, the mode for the estimation of the direction sign ('order', 'node_d', 'PCAo', 'PCAnd')
+    - chargeID_mode: str, the mode for the estimation of the charge ("curv_estimate", "simple_curv", "fit_whole_traj", "fit_local_traj")
+    
+    Returns:
+    - charge : array-like, shape (n_points,), the estimated charge of the trajectory points.
+    - momentum : array-like, shape (n_points, 3), the estimated momentum of the trajectory points (with momentum norm and direction).
+    - curvature : array-like, shape (n_points, 3), the estimated curvature of the trajectory points
+    - points_updated : array-like, shape (n_points, 3), the trajectory points shifted towards the estimated trajectory line
+    - point_order_coord : array-like, shape (n_points,), the estimated coordinates of the points along the trajectory, ranging from -1 (the first point) to +1 (the last point)
+    """
     
     
     
@@ -1037,12 +1144,10 @@ def construct_direction_and_curvature(node_c_absolute:np.ndarray|torch.Tensor,
         
         ## Get the estimated curvature
         ## curv_i
-        curvature = _estimate_curvature(node_d,
-                                        direction,
+        curvature = _estimate_curvature(direction,
                                         dir_order_matrix,
                                         matrix_of_differences,
                                         matrix_of_distances,
-                                        args_node_d,
                                         args_curv,
                                         )
 
@@ -1159,6 +1264,24 @@ def charge_and_momentum_fit(ret_dict:dict,
                         n:int=1,
                         device:torch.device|None=None,
                         **kwargs) -> tuple[np.ndarray,np.ndarray,np.ndarray,np.ndarray]:
+    """
+    Execute construct_direction_and_curvature batch per batch to get the estimation of the charge, momentum, direction and curvature of trajectory points.
+    
+    Parameters:
+    - ret_dict: dict, dictionary containing all the unscaled results sorted by event_id, traj_id and hit_order; of the testing of a model (the return of sort_event_from_all_results)
+    - values: str, which trajectories to use ('pred' for the predictions of the model, 'recon' for the predictions of the Bayesian filter, 'from_truth' for the targets).
+    - show_progressbar: bool, whether to display a progress bar or not
+    - N: int, number of events to process (default is the maximum event_id)
+    - n: int, number of events to process at once (batch size, default is 1)
+    - device: torch.device, device to run the computations on
+    
+    Returns:
+    - charge : array-like, shape (n_points,), the estimated charge of the trajectory points.
+    - momentum : array-like, shape (n_points, 3), the estimated momentum of the trajectory points (with momentum norm and direction).
+    - curvature : array-like, shape (n_points, 3), the estimated curvature of the trajectory points
+    - points_updated : array-like, shape (n_points, 3), the trajectory points shifted towards the estimated trajectory line
+    - point_order_coord : array-like, shape (n_points,), the estimated coordinates of the points along the trajectory, ranging from -1 (the first point) to +1 (the last point)
+    """
     
     Charge=[]
     Momentum=[]
@@ -1258,6 +1381,9 @@ def update_dict(ret_dict:dict,
                 curvature:np.ndarray,
                 points_updated:np.ndarray,
                 **kwargs) -> dict:
+    """
+    Copy a dictionnary of results and add the charge, momentum, curvature and points_updated to it.
+    """
     
     ret2={}
     for key in ret_dict.keys():
@@ -1279,6 +1405,18 @@ def group_per_traj(ret_dict_updated:dict,
                         show_progressbar:bool=True,
                         N:int|None=None,
                         null_charge_threshold:float=0.5) -> dict:
+    """
+    Re estimate the charge and momentum at the trajectory level.
+    
+    Parameters:
+    - ret_dict_updated: dict, dictionary containing all the results (return of update_dict)
+    - show_progressbar: bool, whether to display a progress bar or not
+    - N: int, number of events to process (default is the maximum event_id)
+    - null_charge_threshold: float, value of the estimated charge below which it is assigned to a null charge
+    
+    Returns:
+    - ret2 : dict, dictionary containing the reestimated charge and momentum at the trajectory level
+    """
     
     N=int(np.max(ret_dict_updated['event_id']) if N is None else N)
     i=0
@@ -1407,6 +1545,25 @@ def test_dirScale(ret_dict:dict,
                 max_dirScale:float=200.,
                 num_points:int=100,
                 **kwargs) -> tuple[np.ndarray,np.ndarray,np.ndarray,np.ndarray]:
+    """
+    Test different values for the scale parameter of the weighting kernel in the direction estimation.
+    
+    Parameters:
+    - ret_dict: dict, dictionary containing all the results (return of sort_event_from_all_results)
+    - values: str, which trajectories to use ('pred' for the predictions of the model, 'recon' for the predictions of the Bayesian filter, 'from_truth' for the targets).
+    - N: int, number of events to process (None is the maximum event_id)
+    - n: int, batch size
+    - device: torch.device, device on which the computations are performed (None for CPU)
+    - min_dirScale: float, minimum value of the scale parameter for the direction estimation.
+    - max_dirScale: float, maximum value of the scale parameter for the direction estimation.
+    - num_points: int, number of points to test the direction scales.
+    
+    Returns:
+    - dirScales: np.ndarray, the scale parameter for the direction estimation tested.
+    - Mean: np.ndarray, the mean direction anglular distances for the tested scale parameters.
+    - Res: np.ndarray, the 68% of the direction angular distances
+    - Inverted: np.ndarray, the percentage of the direction angular distances that are inverted (i.e., angle > pi/2).
+    """
         
         
     dirScales = np.linspace(min_dirScale,max_dirScale,num_points)
@@ -1460,6 +1617,23 @@ def test_curvScale(ret_dict:dict,
                 max_curvScale:float=500.,
                 num_points:int=100,
                 **kwargs) -> tuple[np.ndarray,np.ndarray]:
+    """
+    Test different values for the scale parameter of the weighting kernel in the curvature estimation.
+    
+    Parameters:
+    - ret_dict: dict, dictionary containing all the results (return of sort_event_from_all_results)
+    - values: str, which trajectories to use ('pred' for the predictions of the model, 'recon' for the predictions of the Bayesian filter, 'from_truth' for the targets).
+    - N: int, number of events to process (None is the maximum event_id)
+    - n: int, batch size
+    - device: torch.device, device on which the computations are performed (None for CPU)
+    - min_dirScale: float, minimum value of the scale parameter for the direction estimation.
+    - max_dirScale: float, maximum value of the scale parameter for the direction estimation.
+    - num_points: int, number of points to test the direction scales.
+    
+    Returns:
+    - curvScales: np.ndarray, the scale parameter for the curvature estimation tested.
+    - Acc: np.ndarray, the accuracy of the charge prediction for the tested scale parameters.
+    """
         
         
     curvScales = np.linspace(min_curvScale,max_curvScale,num_points)

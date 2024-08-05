@@ -4,6 +4,18 @@ import torch.nn.functional as F
 
 
 def dice_loss_fn_multiclass(pred, target, num_classes, eps=1e-5):
+    """
+    Dice loss function for multiclass classification
+    
+    Parameters:
+    - pred (torch.Tensor): The predicted probabilities of shape (:, num_classes, ...).
+    - target (torch.Tensor): The true classes of shape (:, ...).
+    - num_classes (int): The number of classes
+    - eps (float): epsilon value to avoid division by zero
+    
+    Returns:
+    - dice_loss (torch.Tensor): The average Dice loss for all classes
+    """
     pred = F.softmax(pred, dim=1)
     
     dice_loss = 0.0
@@ -22,6 +34,9 @@ def dice_loss_fn_multiclass(pred, target, num_classes, eps=1e-5):
 
 
 class DiceLoss(nn.Module):
+    """
+    Dice loss module for multiclass classification
+    """
     def __init__(self, num_classes, eps=1e-5):
         super().__init__()
         self.num_classes = num_classes
@@ -42,6 +57,9 @@ FocalLoss = torch.hub.load(
 
 
 class SumLoss(nn.Module):
+    """
+    Sum of several loss functions
+    """
     def __init__(self, losses, weights=None):
         super().__init__()
         self.losses=torch.nn.ModuleList(losses)

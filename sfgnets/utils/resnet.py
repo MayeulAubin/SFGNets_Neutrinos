@@ -1,3 +1,6 @@
+"""
+Resnets borrowed directly from the MinkowskiEngine package
+"""
 # Copyright (c) Chris Choy (chrischoy@ai.stanford.edu).
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy of

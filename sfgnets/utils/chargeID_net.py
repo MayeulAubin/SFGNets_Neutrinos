@@ -1,10 +1,13 @@
 import numpy as np
 import torch
 import time
+import tqdm
 
-from .utils import track_recon
+from . import track_recon
 from .. import track_fitting_net
-from ..datasets import *
+from ..datasets.utils import full_dataset
+from ..datasets.dataclass import EventDataset
+from ..track_fitting_net.dataset import PGunEvent
 from sklearn.metrics import classification_report
 
 

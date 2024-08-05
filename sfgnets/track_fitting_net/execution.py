@@ -318,7 +318,7 @@ def test_full(model:torch.nn.Module,
             do_we_consider_coord:bool=False,
             do_we_consider_feat:bool=True,
             do_we_consider_event_id:bool=True,
-            max_batches:int|None=None,) -> dict[str, list[np.ndarray]]:
+            max_batches:int|None=None,) -> dict[str, list[np.ndarray]|None]:
     """
     Tests the model over the test dataset.
     
@@ -552,7 +552,7 @@ def training(device:torch.device,
             save_model_path:str|None=None,
             num_workers:int=24,
             notebook_tqdm:bool=False,
-            ) -> dict:
+            ) -> dict[str,list[float]]:
     """
     Training function.
     
