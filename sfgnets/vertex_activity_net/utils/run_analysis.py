@@ -22,6 +22,8 @@ parser.add_argument("-dl", "--decoder_layers", type=int, default=10, help="numbe
 parser.add_argument("-a", "--attn_heads", type=int, default=16, help="number of attention heads")
 parser.add_argument("-G", "--gpu", type=int, default=1, help="GPU ID (cuda) to be used")
 parser.add_argument("-vc", "--version_config", type=int, default=1, help="Version of the config to use")
+parser.add_argument("-T", "--use_truth", action="store_true", help="Use the truth information in the iteration of the transformer")
+parser.add_argument("-fc", "--formula_correction", action="store_true", help="Use the approximation formula correction")
 
 
 args_trans = parser.parse_args()
@@ -44,7 +46,8 @@ transformer = VATransformer(num_encoder_layers=args_trans.encoder_layers,
                                img_size=config_trans["img_size"],
                                kin_tgt_size=config_trans["target_size"],
                             #    pid_tgt_size=len(config_trans["additional_particles"]),
-                               pid_tgt_size=3, # default value
+                              #  pid_tgt_size=3, # default value
+                               pid_tgt_size=2, # default value
                                dropout=args_trans.dropout,
                                max_len=sum([config_trans[f"max_{part}"] for part in config_trans["additional_particles"]]),
                                device="cuda",
@@ -59,8 +62,9 @@ print(f"Model used : {model_version}")
 
 per_event_analysis,per_particle_analysis = analyze_testset(model=transformer, test_set=test_set_trans,
                                                            device="cuda",
-                                                           use_truth=True, 
-                                                        #    N_max=1000
+                                                           use_truth=args_trans.use_truth, 
+                                                        #    N_max=1000,
+                                                            use_formula_correction=args_trans.formula_correction,
                                                            )
 
 with open(f"/scratch4/maubin/results/{model_version}_analysis.pk","wb") as f:

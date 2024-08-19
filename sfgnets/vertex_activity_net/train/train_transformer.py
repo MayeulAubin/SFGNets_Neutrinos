@@ -54,8 +54,8 @@ def main():
                              num_head=args.attn_heads,
                              img_size=config["img_size"],
                              kin_tgt_size=config["target_size"],
-                            #  pid_tgt_size=len(config["additional_particles"]),
-                             pid_tgt_size=3, # default value
+                             pid_tgt_size=len(config["additional_particles"]),
+                            #  pid_tgt_size=3, # default value
                              dropout=args.dropout,
                              max_len=sum([config[f"max_{part}"] for part in config["additional_particles"]]),
                              device=device,

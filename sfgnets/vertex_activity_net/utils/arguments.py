@@ -10,7 +10,7 @@ Description: argparse arguments for each neural network.
 import argparse
 
 
-def args_transformer(version=2):
+def args_transformer(version=3):
     """
     Create an argument parser for Transformer model configuration.
 

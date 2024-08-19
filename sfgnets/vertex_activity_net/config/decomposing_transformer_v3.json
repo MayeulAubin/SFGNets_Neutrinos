@@ -1,10 +1,11 @@
 {
   "mu_particles": ["mu+","mu-"],
-  "additional_particles":["p"],
+  "additional_particles":["p","n"],
   "PID_FROM_PARTICLE":{
                         "mu+":0,
                         "mu-":0,
-                        "p":1
+                        "p":1,
+                        "n":2
                       },
   "cube_size": 10.27,
   "min_theta": 0,
@@ -13,9 +14,12 @@
   "max_phi": 360,
   "img_size": 7,
   "max_p": 5,
+  "max_n": 5,
   "min_charge": 0,
   "min_ke_p": 0,
   "max_ke_p": 100,
+  "min_ke_n": 0,
+  "max_ke_n": 100,
   "min_ke_mu+": 0,
   "max_ke_mu+": 2500,
   "min_ke_mu-": 0,
@@ -31,6 +35,6 @@
   "pad_value": -2,
   "log_path": "/scratch4/maubin/results/vertex_activity_log",
   "save_path": "/scratch4/maubin/models/vertex_activity_model",
-  "checkpoint_test_path": "/scratch4/maubin/models/vatransformer_v13.pth",
-  "checkpoint_path": "/scratch4/maubin/models/vatransformer_weights.pth"
+  "checkpoint_test_path": "/scratch4/maubin/models/vatransformer_v14.pth",
+  "checkpoint_path": "/scratch4/maubin/models/vatransformer_weights_2.pth"
 }

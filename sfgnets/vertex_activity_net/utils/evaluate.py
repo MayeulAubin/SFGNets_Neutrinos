@@ -2,7 +2,7 @@ import numpy as np
 import torch
 import tqdm
 
-from ...datasets.constants import CUBE_SIZE
+from ...datasets.constants import CUBE_SIZE, ORIGIN
 from .data_functions import rescale
 from .mask_generation import create_mask, create_mask_src, create_mask_tgt
 from ..models.decomposing_transformer.transformer import VATransformer
@@ -63,7 +63,7 @@ def eval_event(event_n:int,
                                                                      src_padding_mask.to(device), tgt_padding_mask.to(device))
         
         keep_iter_pred = keep_iter_pred[:,0,:].argmax(axis=1)
-        first_index_to_stop = ((keep_iter_pred == 0)*torch.arange(len(keep_iter_pred),0,-1).to(device)).argmax()
+        first_index_to_stop = ((keep_iter_pred == 0)*torch.arange(len(keep_iter_pred)).to(device)).argmin()+1
         
         
         # kin_true = params_true
@@ -101,15 +101,17 @@ def eval_event(event_n:int,
 
             if keep_iterating_last.argmax(0) == 0:
                 break
-
+    
     # Retrieve output
-    pid_true = pid_true.cpu().numpy()[:, 0]
+    pid_true = pid_true.cpu().numpy()[:, 0] # no need to remove the muon, already done in the collate function
     pid_pred = pid_pred.detach().cpu().numpy()[1:, 0]
-    # kin_true = kin_true.cpu().numpy()
+    kin_true = kin_true[1:, :]
     kin_pred = kin_pred.detach().cpu().numpy()[1:, 0, :]
     vtx_true = vtx_true.cpu().numpy()
     vtx_pred = vtx_pred.detach().cpu().numpy()
     particle_images = particle_images[0]
+    
+    
 
     # Rescale to original values
     rescale(test_set, particle_images, muon_exit, kin_true, kin_pred, vtx_true, vtx_pred)
@@ -240,12 +242,16 @@ def approximation_formula_va_energy(total_charge:np.ndarray|float,
 
 
 
-def approximation_formula_va_energy_standard(hits, threshold = 100):
+def approximation_formula_va_energy_standard(hits, threshold = 100, correction = False):
     c_b = 0.0126
-    c_cali = 100
+    # c_cali = 100
+    c_cali = 85.82
+    min_length = 0.5
+    max_length = 4.5*np.sqrt(3)*CUBE_SIZE*2
     
     hits_aux = hits.copy()
-    hits_aux[:,:3]= (hits_aux[:,:3]-4)*10
+    # hits_aux[:,:3]= (hits_aux[:,:3]-4)*CUBE_SIZE*2
+    hits_aux[:,:3]-=ORIGIN
 
     mask = (hits_aux[:, 3] >= threshold)
     
@@ -254,11 +260,11 @@ def approximation_formula_va_energy_standard(hits, threshold = 100):
         distances = np.linalg.norm(hits_aux[mask][:,:3], axis=1)
         longest_proton = distances.max()
         
-        if longest_proton == 0:
-            longest_proton = 0.5
+        # Avoid unphysical distances (notably division by 0)
+        longest_proton = np.clip(longest_proton,min_length,max_length)
             
     else:
-        longest_proton = 0.5
+        longest_proton = min_length
     
     distances = np.linalg.norm(hits_aux[:,:3], axis=1)
     
@@ -269,17 +275,22 @@ def approximation_formula_va_energy_standard(hits, threshold = 100):
         
     E_reco = (1 / (1 - c_b*(E/longest_proton))) * E
     
+    if correction:
+        E_reco = 0.869*E_reco-26.25
     
-    return E_reco
+    
+    return E_reco, E, longest_proton
 
 
 def analyze_event(model,
                   test_set,
                   event_n:int,
                   device:str|torch.device='cuda',
-                  use_truth:bool=False):
+                  use_truth:bool=False,
+                  use_formula_correction:bool=False):
+    
     # Run the decomposing transformer and get particle information
-    images, _, exit_muon, params_true, params_pred, pids_true, pids_pred, vtx_true, vtx_pred = \
+    images, sfgd_image, exit_muon, params_true, params_pred, pids_true, pids_pred, vtx_true, vtx_pred = \
                             eval_event(event_n, model, test_set, device=device, use_truth=use_truth)
                             
     event = test_set[event_n]
@@ -287,8 +298,8 @@ def analyze_event(model,
     # Extract muon exit information
     exit_x, exit_y, exit_z, exit_ke, exit_theta, exit_phi = exit_muon
     
-    ke, theta, phi = params_true[1:,0], params_true[1:,1], params_true[1:,2] # the [1:] is to remove the muon
-    nb_part = len(params_true[1:])
+    ke, theta, phi = params_true[:,0], params_true[:,1], params_true[:,2] 
+    nb_part = len(params_true[:])
     nb_pred = len(params_pred)
     
     min_nb = min(nb_part,nb_pred)
@@ -297,17 +308,20 @@ def analyze_event(model,
     
     ke_diff = ke[:min_nb]-ke_pred[:min_nb]
     
+    deg_to_rad = np.pi/180.
+    
     true_direction = np.zeros((nb_part,3))
-    true_direction[:,0] = np.sin(theta)*np.cos(phi)
-    true_direction[:,1] = np.sin(theta)*np.sin(phi)
-    true_direction[:,2] = np.cos(theta)
+    true_direction[:,0] = np.sin(theta*deg_to_rad)*np.cos(phi*deg_to_rad)
+    true_direction[:,1] = np.sin(theta*deg_to_rad)*np.sin(phi*deg_to_rad)
+    true_direction[:,2] = np.cos(theta*deg_to_rad)
     
     pred_direction = np.zeros((nb_pred,3))
-    pred_direction[:,0] = np.sin(theta_pred)*np.cos(phi_pred)
-    pred_direction[:,1] = np.sin(theta_pred)*np.sin(phi_pred)
-    pred_direction[:,2] = np.cos(theta_pred)
+    pred_direction[:,0] = np.sin(theta_pred*deg_to_rad)*np.cos(phi_pred*deg_to_rad)
+    pred_direction[:,1] = np.sin(theta_pred*deg_to_rad)*np.sin(phi_pred*deg_to_rad)
+    pred_direction[:,2] = np.cos(theta_pred*deg_to_rad)
     
     angle_distance = np.arccos(np.sum(true_direction[:min_nb]*pred_direction[:min_nb],axis=-1))
+    angle_distance /= deg_to_rad
     
     vtx_distance = np.linalg.norm(vtx_true-vtx_pred)
     
@@ -322,7 +336,8 @@ def analyze_event(model,
     # total_charge = np.sum(images[1:])
     # approximated_vertex_activity_energy = approximation_formula_va_energy(total_charge,trajectory_length_longest)
     
-    approximated_vertex_activity_energy = approximation_formula_va_energy_standard(images[1:])
+    approximated_vertex_activity_energy, E_cal, longest_proton = approximation_formula_va_energy_standard(np.vstack(sfgd_image[1:]),
+                                                                                   correction=use_formula_correction)
     
     
     
@@ -332,7 +347,7 @@ def analyze_event(model,
             "pid":pids_true,
             "muon_ke":exit_ke,
             "nb_part":nb_part,
-            "lengths":np.array(event["lengths"]),
+            "lengths":np.array(event["lengths"][1:]), # remove the muon (first index)
             "true_theta":theta,
             "true_phi":phi,
             
@@ -348,6 +363,9 @@ def analyze_event(model,
             
             "min_nb":min_nb,
             "formula_total_ke":approximated_vertex_activity_energy,
+            
+            "E_cal":E_cal,
+            "longest_proton":longest_proton,
             }
 
 
@@ -356,7 +374,8 @@ def analyze_testset(model,
                     test_set,
                     N_max:int|None=None,
                     device:str|torch.device='cuda',
-                    use_truth:bool=False):
+                    use_truth:bool=False,
+                    use_formula_correction:bool=False):
     
     if N_max is None:
         N_max = len(test_set)
@@ -387,6 +406,10 @@ def analyze_testset(model,
                              "formula_total_ke_diff":[],
                              "formula_total_ke_res_%":[],
                              "formula_total_ke_abs_res_%":[],
+                             
+                             "E_cal":[],
+                             "longest_proton":[],
+
                             }
     
     
@@ -427,7 +450,8 @@ def analyze_testset(model,
                        test_set=test_set,
                        event_n=event_n,
                        device=device,
-                       use_truth=use_truth)
+                       use_truth=use_truth,
+                       use_formula_correction=use_formula_correction)
         
         ## True information per event
         per_event_analysis["muon_ke"].append(analysis_event["muon_ke"])
@@ -453,6 +477,8 @@ def analyze_testset(model,
         per_event_analysis["formula_total_ke_diff"].append(per_event_analysis["total_ke"][-1]-analysis_event["formula_total_ke"])
         per_event_analysis["formula_total_ke_res_%"].append(100*(per_event_analysis["total_ke"][-1]-analysis_event["formula_total_ke"])/np.clip(per_event_analysis["total_ke"][-1],1.,None))
         per_event_analysis["formula_total_ke_abs_res_%"].append(np.abs(per_event_analysis["formula_total_ke_res_%"][-1]))
+        per_event_analysis["E_cal"].append(analysis_event["E_cal"])
+        per_event_analysis["longest_proton"].append(analysis_event["longest_proton"])
         
         ## True information per particle
         min_nb = analysis_event["min_nb"]

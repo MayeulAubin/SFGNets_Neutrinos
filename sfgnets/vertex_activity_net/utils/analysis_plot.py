@@ -17,6 +17,7 @@ replacements = {
     'part': 'particles',
     'abs': 'absolute',
     'res': 'resolution',
+    'pred': 'predicted',
 }
 
 
@@ -41,7 +42,8 @@ if __name__ == '__main__':
                     description='Fine tunes a model for Track Fitting in SFG',)
 
     parser.add_argument('-p', '--per_particle', action='store_true', help='analysis per particle instead of per event')
-    parser.add_argument("-v", "--version", type=int, default=1, help="Version of the model analysis to plot")
+    parser.add_argument("-v", "--version", type=str, default=1, help="Version of the model analysis to plot")
+    parser.add_argument('-w', '--white_mode', action='store_true', help='White background')
     args = parser.parse_args()
     
     with open(f"/scratch4/maubin/results/vatransformer_v{args.version}_analysis.pk","rb") as f:
@@ -247,7 +249,7 @@ if __name__ == '__main__':
                         x=0.5, y=0.95, xanchor='left', yanchor='top',
                         text=f"<b>Mean:</b> {mean_val:.2f}, <b>Median:</b> {median_val:.2f}, <b>Std:</b> {std_val:.2f}, <b>Data selected:</b> {100*data_size/dataset_size:.2f}%",
                         showarrow=False,
-                        font=dict(size=12, color="white")
+                        font=dict(size=12, color="black" if args.white_mode else "white")
                     ),
                 ]
                 fig.add_annotation(annotations[0])
@@ -264,10 +266,13 @@ if __name__ == '__main__':
             fig.update_layout(
                 title=f'Distribution of {columns_map[var1]}',
                 xaxis_title=columns_map[var1],
+                xaxis=dict(linecolor="black" if args.white_mode else "white"),
                 yaxis=dict(
                     title=f'{columns_map[var1]} Distribution',
                     titlefont=dict(color='#0090d2'),
-                    tickfont=dict(color='#0090d2')
+                    tickfont=dict(color='#0090d2'),
+                    showgrid=False,
+                    linecolor="black" if args.white_mode else "white"
                 ),
             )
             
@@ -286,7 +291,8 @@ if __name__ == '__main__':
         
                 # Calculate mean and standard deviation of X2 for each bin
                 bin_means = binned_stats.groupby('bin')['X1b'].mean()
-                bin_stds = binned_stats.groupby('bin')['X1b'].std()
+                bin_25 = binned_stats.groupby('bin')['X1b'].quantile(0.25)
+                bin_75 = binned_stats.groupby('bin')['X1b'].quantile(0.75)
 
                 # Calculate bin centers for the x-axis
                 bin_centers = (bins[:-1] + bins[1:]) / 2
@@ -297,9 +303,27 @@ if __name__ == '__main__':
                 fig.add_trace(
                     go.Scatter(
                         x=bin_centers, 
+                        y=bin_25,
+                        name=f'{columns_map[var1b]} q=25%',
+                        marker_color='#ffd280',
+                        yaxis='y2',
+                        mode='lines'
+                    ))
+                fig.add_trace(
+                    go.Scatter(
+                        x=bin_centers, 
+                        y=bin_75, 
+                        name=f'{columns_map[var1b]} q=75%',
+                        marker_color='#ffd280',
+                        yaxis='y2',
+                        mode='lines',
+                        fill='tonextx'
+                    ))
+                fig.add_trace(
+                    go.Scatter(
+                        x=bin_centers, 
                         y=bin_means, 
-                        error_y=dict(type='data', array=bin_stds),
-                        name=f'{columns_map[var1b]} Mean ± Std Dev',
+                        name=f'{columns_map[var1b]} Mean',
                         marker_color='#ffa600',
                         yaxis='y2',
                         mode='lines+markers'
@@ -308,13 +332,15 @@ if __name__ == '__main__':
                 
                 # Update layout to add axis labels and adjust layout
                 fig.update_layout(
-                    title=f'Distribution of {columns_map[var1]} and Mean ± Std Dev of {columns_map[var1b]}',
+                    title=f'Distribution of {columns_map[var1]} and Mean ± 25% of {columns_map[var1b]}',
                     yaxis2=dict(
-                        title=f'{columns_map[var1b]} Mean ± Std Dev',
+                        title=f'{columns_map[var1b]} Mean ± 25% quantiles',
                         titlefont=dict(color='#ffa600'),
                         tickfont=dict(color='#ffa600'),
                         overlaying='y',
-                        side='right'
+                        side='right',
+                        showgrid=False,
+                        linecolor="black" if args.white_mode else "white"
                     ),
                 )
             
@@ -348,9 +374,9 @@ if __name__ == '__main__':
             # height=1200,  # Adjust the height for better visualization
             # width = 1000,
             showlegend=False,
-            paper_bgcolor='#222',  # Dark background for plot
-            plot_bgcolor='#333',  # Dark background for subplots
-            font=dict(color='white')  # White font for text
+            paper_bgcolor='white' if args.white_mode else '#222',  # Dark background for plot
+            plot_bgcolor='white' if args.white_mode else '#333',  # Dark background for subplots
+            font=dict(color="black") if args.white_mode else dict(color='white')  # White font for text
         )
 
         # Update individual x-axis labels for subplots
